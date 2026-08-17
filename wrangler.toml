@@ -1,0 +1,46 @@
+name = "edge-multidrive"
+main = "./src/index.ts"
+compatibility_date = "2025-04-04"
+compatibility_flags = ["nodejs_compat"]
+
+# 静态前端（SPA）由 Workers Assets 托管，边缘就近返回，毫秒级。
+# /api/* 与 /dav/* 不命中静态文件，自动交由 Worker 脚本处理。
+[assets]
+directory = "./src/web"
+html_handling = "auto-trailing-slash"
+not_found_handling = "single-page-application"
+
+# =====================================================================
+# 配置方案（v3）：每账号一个 AUTH_<NAME> 变量，经 wrangler secret 注入。
+# 一个账号只写一次凭据，下面 mounts[] 列出该账号要挂的 N 个目录。
+#
+# 账号 JSON 结构：
+# {
+#   "type": "onedrive-e5" | "onedrive-personal" | "s3",
+#   ...凭据字段...,
+#   "mounts": [ { "path": "/url前缀", "root": "/账号内路径", "title": "可选", "cache": "可选覆盖" } ]
+# }
+#
+# 例 A：OneDrive E5（证书，免失效）
+#   wrangler secret put AUTH_ONEDRIVE_ZHU
+#   值：{"type":"onedrive-e5","tenant_id":"<tid>","client_id":"<cid>","cert_thumbprint":"<thumb>","cert_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
+#
+# 例 B：OneDrive 个人版（refresh，会过期）
+#   wrangler secret put AUTH_ONEDRIVE_PER
+#   值：{"type":"onedrive-personal","tenant_id":"common","client_id":"<cid>","refresh_token":"<refresh>","client_secret":"<可选>","mounts":[{"path":"/odp","root":"/","title":"个人盘"}]}
+#
+# 例 C：S3 / R2
+#   wrangler secret put AUTH_R2_BACKUP
+#   值：{"type":"s3","endpoint":"https://<id>.r2.cloudflarestorage.com","region":"auto","bucket":"<bucket>","access_key_id":"<ak>","secret_access_key":"<sk>","mounts":[{"path":"/backup","root":"/"}]}
+#
+# 同账号挂多目录：在 mounts[] 再加一项即可（凭据不重复写）。
+# =====================================================================
+
+# 公用变量（非敏感，可明文；也可 secret）
+[vars]
+SITE_TITLE = "edge-multidrive"
+CACHE_CONTROL = "public, max-age=300"
+# ADMIN_PUBKEY = "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
+
+# 注意：本方案刻意不使用 [[d1_databases]] / [[kv_namespaces]]，
+# 所有状态 = env vars(secret) + 存储内 .passwd/.hidden 标记文件，零 KV/D1/SQL。

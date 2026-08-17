@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edge MultiDrive</title>
+  <style>
+    :root { --bg:#fff; --fg:#1a1a1a; --line:#e5e5e5; --accent:#2563eb; --muted:#888; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0f1115; --fg:#e6e6e6; --line:#262b33; --accent:#60a5fa; --muted:#888; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--fg); }
+    header { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+    header .title { font-weight:600; }
+    #crumbs { flex:1; font-size:14px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #crumbs span { cursor:pointer; color:var(--accent); }
+    #crumbs span:hover { text-decoration:underline; }
+    #search { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); min-width:200px; }
+    main { padding:8px 16px 40px; }
+    .row { display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:6px; cursor:pointer; }
+    .row:hover { background:rgba(127,127,127,.08); }
+    .row .ico { width:22px; text-align:center; }
+    .row .name { flex:1; }
+    .row .size { color:var(--muted); font-size:13px; }
+    .empty { color:var(--muted); padding:20px; text-align:center; }
+    #modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:10; }
+    #modal.show { display:flex; }
+    #modal .box { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:92vw; max-height:92vh; overflow:auto; }
+    #modal .box img, #modal .box video, #modal .box iframe { max-width:88vw; max-height:82vh; display:block; border:0; }
+    .close { float:right; cursor:pointer; color:var(--muted); }
+    input.pw { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">📦 MultiDrive</div>
+    <div id="crumbs"></div>
+    <input id="search" placeholder="搜索当前盘…" />
+  </header>
+  <main id="list"></main>
+
+  <div id="modal"><div class="box"><span class="close" onclick="closeModal()">✕</span><div id="modalBody"></div></div></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

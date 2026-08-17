@@ -1,4 +1,4 @@
-name = "edge-multidrive"
+name = "Elist"
 main = "./src/index.ts"
 compatibility_date = "2025-04-04"
 compatibility_flags = ["nodejs_compat"]

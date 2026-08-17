@@ -15,9 +15,12 @@ registerDriver('onedrive-personal', OneDriveDriver);
 
 const app = new Hono<{ Bindings: Env }>();
 
-// 公用配置（标题等），供前端读取
+// 公用配置（标题、排序等），供前端读取
 app.get('/api/config', (c) => {
-  return c.json({ title: c.env.SITE_TITLE || 'edge-multidrive' });
+  return c.json({
+    title: c.env.SITE_TITLE || 'edge-multidrive',
+    sort: c.env.SORT || 'name_asc',
+  });
 });
 
 app.get('/api/list', handleList);

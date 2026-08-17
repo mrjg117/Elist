@@ -16,7 +16,8 @@
     #crumbs { flex:1; font-size:14px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #crumbs span { cursor:pointer; color:var(--accent); }
     #crumbs span:hover { text-decoration:underline; }
-    #search { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); min-width:200px; }
+    #search { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); min-width:160px; }
+    #sort { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); }
     main { padding:8px 16px 40px; }
     .row { display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:6px; cursor:pointer; }
     .row:hover { background:rgba(127,127,127,.08); }
@@ -36,6 +37,16 @@
   <header>
     <div class="title">📦 MultiDrive</div>
     <div id="crumbs"></div>
+    <select id="sort" title="排序">
+      <option value="name_asc">名称 ↑</option>
+      <option value="name_desc">名称 ↓</option>
+      <option value="time_asc">时间 ↑</option>
+      <option value="time_desc">时间 ↓</option>
+      <option value="size_asc">大小 ↑</option>
+      <option value="size_desc">大小 ↓</option>
+      <option value="type_asc">类型 ↑</option>
+      <option value="type_desc">类型 ↓</option>
+    </select>
     <input id="search" placeholder="搜索当前盘…" />
   </header>
   <main id="list"></main>

@@ -118,3 +118,52 @@ export function uuid(): string {
   // @ts-ignore crypto.randomUUID 在 Workers 可用
   return crypto.randomUUID();
 }
+
+// ---- TOTP（访问门禁用，非密钥）----
+// 仅用于校验用户提交的 6 位动态码，配合固定密码做二因素；单靠 TOTP 不当密钥。
+
+/** RFC 4648 base32 解码（TOTP 密钥常见格式）。 */
+export function base32Decode(s: string): Uint8Array<ArrayBuffer> {
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = s.toUpperCase().replace(/=+$/, '').replace(/\s+/g, '');
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = alpha.indexOf(ch);
+    if (idx < 0) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((value >>> bits) & 0xff);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+/** 计算某时刻的 TOTP 6 位码（步长 30s）。 */
+export async function totpAt(secretB32: string, timeSec: number): Promise<string> {
+  const key = base32Decode(secretB32);
+  const ck = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const buf = new ArrayBuffer(8);
+  const view = new DataView(buf);
+  view.setUint32(4, Math.floor(timeSec / 30)); // 高 32 位为 0，低 32 位为时间计数器
+  const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', ck, buf));
+  const off = hmac[hmac.length - 1] & 0x0f;
+  const bin =
+    ((hmac[off] & 0x7f) << 24) |
+    ((hmac[off + 1] & 0xff) << 16) |
+    ((hmac[off + 2] & 0xff) << 8) |
+    (hmac[off + 3] & 0xff);
+  return (bin % 1_000_000).toString().padStart(6, '0');
+}
+
+/** 校验 TOTP 码（容许 ±1 个时间窗以兼容时钟漂移）。 */
+export async function verifyTotp(secretB32: string, code: string): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  for (const w of [-1, 0, 1]) {
+    if ((await totpAt(secretB32, now + w * 30)) === code) return true;
+  }
+  return false;
+}

@@ -18,8 +18,22 @@ not_found_handling = "single-page-application"
 # {
 #   "type": "onedrive-e5" | "onedrive-personal" | "s3",
 #   ...凭据字段...,
-#   "mounts": [ { "path": "/url前缀", "root": "/账号内路径", "title": "可选", "cache": "可选覆盖" } ]
+#   "mounts": [ { "path":"/url前缀", "root":"/账号内路径", "title":"可选",
+#                 "cache":"可选覆盖", "hide":false, "passwd":"可选门禁", "sort":"可选" } ]
 # }
+#
+# 挂载级可选字段（均可缺省）：
+#   hide   : true 时根目录列表不显示该盘（仅界面隐藏，硬路径仍可访问）
+#   passwd : 挂载级访问门禁 verifier（格式见下方 .passwd），与文件夹级 .passwd 可叠加
+#   sort   : 本盘列表默认排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
+#
+# .passwd 标记文件（放在某文件夹内即对该文件夹生效）verifier 格式：
+#   sha256:<hex>     固定密码，hex = sha256(用户所输)
+#   <hex>            兼容旧版（整行即 sha256(密码) hex）
+#   dyn:<base>       动态(按天)：期望值 = sha256(base + YYYYMMDD)，用户输 base+YYYYMMDD
+#   dynn:<base>      动态(按小时)：期望值 = sha256(base + YYYYMMDDHH)
+#   totp:<base32>    TOTP 门禁：用户输 6 位动态码（建议配合固定密码做二因素）
+# 前端用 ?pw=xxxx 传密码；隐藏用同目录 .hidden（每行一个条目名）。
 #
 # 例 A：OneDrive E5（证书，免失效）
 #   wrangler secret put AUTH_ONEDRIVE_ZHU
@@ -40,6 +54,8 @@ not_found_handling = "single-page-application"
 [vars]
 SITE_TITLE = "edge-multidrive"
 CACHE_CONTROL = "public, max-age=300"
+SORT = "name_asc"
+# MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
 # ADMIN_PUBKEY = "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 
 # 注意：本方案刻意不使用 [[d1_databases]] / [[kv_namespaces]]，

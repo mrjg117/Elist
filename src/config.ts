@@ -38,6 +38,9 @@ export function getMounts(env: Env): Mount[] {
         driver: acct.type,
         title: mp.title,
         cache: mp.cache,
+        hide: !!mp.hide,
+        passwd: mp.passwd,
+        sort: mp.sort,
         addition,
       });
     }
@@ -74,4 +77,28 @@ export function normalize(path: string): string {
   if (!path.startsWith('/')) path = '/' + path;
   if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
   return path;
+}
+
+/**
+ * 根目录（/）展示的盘列表：按 MOUNT_ORDER 排，剔除 hide 的盘。
+ * 每个盘只出现一次（按 mount 前缀去重，保留首个）。
+ */
+export function getRoots(env: Env): { path: string; title?: string; hide?: boolean }[] {
+  const seen = new Set<string>();
+  const list = getMounts(env)
+    .filter((m) => !seen.has(m.mount) && seen.add(m.mount))
+    .map((m) => ({ path: m.mount, title: m.title, hide: m.hide }));
+
+  const order = (env.MOUNT_ORDER || '')
+    .split(',')
+    .map((s) => normalize(s.trim()))
+    .filter(Boolean);
+  if (order.length) {
+    list.sort((a, b) => {
+      const ia = order.indexOf(a.path);
+      const ib = order.indexOf(b.path);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+  }
+  return list.filter((r) => !r.hide);
 }

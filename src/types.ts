@@ -26,6 +26,9 @@ export interface MountPoint {
   root: string;       // 账号内相对路径，如 /Photos；'/' 表示账号根
   title?: string;     // 展示名（可选）
   cache?: string;     // 覆盖全局 CACHE_CONTROL（可选）
+  hide?: boolean;     // 仅界面隐藏（根目录列表不显示），硬路径仍可访问
+  passwd?: string;    // 挂载级访问门禁（verifier，同 .passwd 格式）；可叠加文件夹级 .passwd
+  sort?: string;      // 本盘列表排序，覆盖全局 SORT（如 time_desc）
 }
 
 /** 一个账号的环境变量 JSON（AUTH_<NAME> 的值）。 */
@@ -56,6 +59,9 @@ export interface Mount {
   driver: string;     // = account.type（驱动注册名）
   title?: string;
   cache?: string;     // 覆盖全局缓存
+  hide?: boolean;     // 仅界面隐藏
+  passwd?: string;    // 挂载级访问门禁 verifier
+  sort?: string;      // 本盘列表排序
   addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）
 }
 
@@ -76,5 +82,7 @@ export interface Env {
   ADMIN_PUBKEY?: string;   // 管理端验签公钥
   SITE_TITLE?: string;     // 公用：站点标题
   CACHE_CONTROL?: string;  // 公用：下载缓存控制
+  SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
+  MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

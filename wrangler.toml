@@ -1,7 +1,6 @@
 name = "Elist"
 main = "./src/index.ts"
 compatibility_date = "2025-04-04"
-compatibility_flags = ["nodejs_compat"]
 
 # 静态前端（SPA）由 Workers Assets 托管，边缘就近返回，毫秒级。
 # /api/* 与 /dav/* 不命中静态文件，自动交由 Worker 脚本处理。

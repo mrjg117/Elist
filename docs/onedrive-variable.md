@@ -12,7 +12,7 @@
   "type": "onedrive",
   "tenant_id": "AAAA0000-1111-2222-3333-444455556666",
   "client_id": "BBBB1111-2222-3333-4444-555566667777",
-  "cert_thumbprint": "Xl4sR1pQl3mQx2vY8nZaBcDeFgHiJkLmNoPqRsTuVw",
+  "cert_pem": "-----BEGIN CERTIFICATE-----\nMIIE...（上传到 Azure 应用的那张公钥证书 PEM 整段，换行写成 \n）...\n-----END CERTIFICATE-----",
   "cert_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n...（整段私钥，换行写成 \n）...\n-----END PRIVATE KEY-----",
   "user_id": "zhangsan@yourorg.onmicrosoft.com",
   "mounts": [
@@ -32,8 +32,8 @@
 | `type` | ✅ | 固定 `"onedrive"` | — |
 | `tenant_id` | ✅ | 组织租户 ID（GUID） | Entra ID → Overview → **Tenant ID** |
 | `client_id` | ✅ | 应用注册的 Application (client) ID | Entra ID → App registrations → 你的应用 → **Application (client) ID** |
-| `cert_thumbprint` | ✅ | 证书指纹的 **base64url** 形式（JWT `x5t` 头直用） | 见下方"⚠️ 指纹格式" |
-| `cert_key` | ✅ | **私钥** PEM（不是公钥证书） | 生成证书时保留的私钥文件 |
+| `cert_pem` | ✅ | **公钥证书** PEM（`BEGIN CERTIFICATE`），上传到 Azure 应用的那张 | 证书文件（你生成证书时一并保留，或点击 Azure 已上传证书行导出） |
+| `cert_key` | ✅ | **私钥** PEM（`BEGIN PRIVATE KEY`，不是公钥证书） | 证书生成时保留的私钥文件 |
 | `user_id` | ✅ | 访问**哪个用户**的盘：UPN 全串（`xxx@租户.onmicrosoft.com`）或 objectId GUID | 租户用户列表 / Graph `GET /users` |
 | `mounts` | ✅ | 挂载点数组（可多个） | — |
 
@@ -68,17 +68,13 @@ echo '{"type":"onedrive",...}' | wrangler secret put AUTH_ONEDRIVE
 
 ---
 
-## 4. ⚠️ 指纹格式（最容易填错）
+## 4. 指纹的事不用你管
 
-`cert_thumbprint` 直接进 JWT 的 `x5t` 头，必须是 **证书 SHA-1 指纹字节的 base64url 编码**，不是门户里常见的十六进制（如 `AB:CD:EF:...`）。
+**Azure 门户里证书那行"指纹"显示是 `7D0EB3709B555837A7C533D87B74EA47A9277524` 这种十六进制**——这其实是给你看的，模板里**完全不用填**。
 
-手里只有十六进制指纹时，在 WSL/Linux 转换：
+我们的代码从你给的 `cert_pem`（公钥证书 PEM）**自动算 SHA-1 指纹并转 base64url**，塞进 JWT 的 `x5t` 头。所以你只需要把证书的 PEM 文本贴进 `cert_pem`，指纹的事交给系统，不会再因为格式不对被 Azure 拒。
 
-```bash
-openssl x509 -in yourcert.pem -outform der | openssl dgst -sha1 -binary | base64 | tr '+/' '-_' | tr -d '='
-```
-
-输出即 `cert_thumbprint` 的值。
+> 兼容性：如果你已经有 `cert_thumbprint` 的旧配置，仍然可以填（base64url 形式），系统会优先用它。不填则从 `cert_pem` 自动算。
 
 ---
 
@@ -87,4 +83,4 @@ openssl x509 -in yourcert.pem -outform der | openssl dgst -sha1 -binary | base64
 - **解析失败静默跳过**：变量 JSON 写错（含私钥真换行）时，该账号**不报错、盘直接不出现**。改了变量后记得点「刷新」或重开页面验证。
 - **个人版不支持**：outlook.com 等个人 Microsoft 账户不能走证书 app-only，必须组织/教育/开发者租户。
 - **权限没授权**：应用需被管理员授予 Graph **Application 权限** `Files.Read.All`（或 `Files.ReadWrite.All`）并 **Grant admin consent**，否则 Graph 403。
-- **证书 ≠ token**：证书 10 年内可随时换 access token（client_credentials 无 refresh_token、无续期操作）；到期只需在 Azure 换新证书并更新 `cert_thumbprint` + `cert_key`。
+- **证书 ≠ token**：证书 10 年内可随时换 access token（client_credentials 无 refresh_token、无续期操作）；到期只需在 Azure 换新证书并更新 `cert_pem` + `cert_key`。

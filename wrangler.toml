@@ -35,7 +35,8 @@ not_found_handling = "single-page-application"
 #
 # 例 A：OneDrive 组织租户（证书 app-only，免失效，E5/E3/商业版/教育版/开发者租户均可）
 #   wrangler secret put AUTH_ONEDRIVE_ZHU
-#   值：{"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_thumbprint":"<thumb>","cert_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----","user_id":"<要挂载用户的UPN或objectId>","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
+#   值：{"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_pem":"-----BEGIN CERTIFICATE-----\n<上传到 Azure 的公钥证书 PEM>\n-----END CERTIFICATE-----","cert_key":"-----BEGIN PRIVATE KEY-----\n<对应的私钥 PEM>\n-----END PRIVATE KEY-----","user_id":"<要挂载用户的UPN或objectId>","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
+#   说明：x5t（JWT 头里的证书指纹）由系统从 cert_pem 自动算出 SHA-1 的 base64url，不用手动换。
 #
 # 例 B：S3 / R2 / OSS / COS / MinIO（靠 endpoint 区分，无需分类型）
 #   wrangler secret put AUTH_R2_BACKUP

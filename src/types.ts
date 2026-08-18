@@ -36,8 +36,9 @@ export interface AuthAccount {
   // —— 各类型鉴权字段（宽松，避免每加一种就改类型）——
   tenant_id?: string;
   client_id?: string;
-  cert_thumbprint?: string;
-  cert_key?: string;          // 组织租户证书私钥 PEM
+  cert_thumbprint?: string;     // 可选：x5t 显式覆盖（base64url 形式）。不填则从 cert_pem 自动算。
+  cert_pem?: string;            // 公钥证书 PEM（X.509，BEGIN CERTIFICATE），上传到 Azure 应用的那张；用于自动算 x5t
+  cert_key?: string;            // 组织租户证书私钥 PEM
   user_id?: string;           // 组织租户下要挂载的用户的 UPN 或 objectId（app-only 无 /me，必须指定）
   endpoint?: string;          // S3
   region?: string;            // S3

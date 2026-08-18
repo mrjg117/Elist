@@ -69,6 +69,13 @@ export async function importRsaPrivateKey(pem: string): Promise<CryptoKey> {
   );
 }
 
+/** 计算证书（公钥 PEM）的 SHA-1 指纹并转 base64url（OneDrive JWT x5t 头直用）。 */
+export async function certX5t(certPem: string): Promise<string> {
+  const der = pemToDer(certPem);
+  const digest = await crypto.subtle.digest('SHA-1', der);
+  return b64url(digest);
+}
+
 /** RSA 签名后做 base64url（用于 JWT 片段）。 */
 export async function signRs256(key: CryptoKey, data: string): Promise<string> {
   const sig = await crypto.subtle.sign(

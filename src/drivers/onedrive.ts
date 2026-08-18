@@ -1,6 +1,6 @@
 import type { Driver, Entry, Mount, Env } from '../types';
 import { BaseDriver } from './base';
-import { importRsaPrivateKey, signRs256, uuid, b64urlFromString } from '../lib/crypto';
+import { importRsaPrivateKey, signRs256, uuid, b64urlFromString, certX5t } from '../lib/crypto';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL = (tenant: string) =>
@@ -22,7 +22,8 @@ const tokenCache = new Map<string, TokenCache>();
 export class OneDriveDriver extends BaseDriver implements Driver {
   private tenantId = '';
   private clientId = '';
-  private thumbprint = '';
+  private thumbprint = '';     // 可显式给（旧配置兼容）；不给则从 cert_pem 自动算
+  private certPem = '';        // 公钥证书 PEM（上传到 Azure 的那张），用于自动算 x5t 指纹
   private certKeyPem = '';     // 组织租户证书私钥 PEM（来自账号 JSON，非全局 env）
   private userId = '';         // 要挂载的用户 UPN / objectId（app-only 无 /me，必须指定）
   private certKey: CryptoKey | null = null;
@@ -34,6 +35,7 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     this.tenantId = a.tenant_id || '';
     this.clientId = a.client_id || '';
     this.thumbprint = a.cert_thumbprint || '';
+    this.certPem = a.cert_pem || '';
     this.certKeyPem = a.cert_key || '';
     this.userId = a.user_id || '';
     if (!this.userId) throw new Error('onedrive app-only requires user_id (UPN or objectId)');
@@ -49,12 +51,26 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     return token;
   }
 
+  /**
+   * 计算 JWT x5t 头：优先用变量显式给的 cert_thumbprint（兼容旧配置），
+   * 否则从公钥证书 cert_pem 自动算 SHA-1 指纹并转 base64url，结果缓存到 this.thumbprint。
+   * 这样用户不用关心 Azure 门户显示的 hex 指纹格式。
+   */
+  private async thumbprintValue(): Promise<string> {
+    if (this.thumbprint) return this.thumbprint;
+    if (!this.certPem) {
+      throw new Error('onedrive requires cert_pem (public cert PEM) or explicit cert_thumbprint');
+    }
+    this.thumbprint = await certX5t(this.certPem);
+    return this.thumbprint;
+  }
+
   private async tokenByCert(): Promise<{ token: string; expires_in: number }> {
     const privPem = this.certKeyPem;
     if (!privPem) throw new Error('cert_key not set for onedrive mount');
     if (!this.certKey) this.certKey = await importRsaPrivateKey(privPem);
     const now = Math.floor(Date.now() / 1000);
-    const header = { alg: 'RS256', typ: 'JWT', x5t: this.thumbprint };
+    const header = { alg: 'RS256', typ: 'JWT', x5t: await this.thumbprintValue() };
     const payload = {
       aud: TOKEN_URL(this.tenantId),
       iss: this.clientId,

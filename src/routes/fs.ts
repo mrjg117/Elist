@@ -23,11 +23,19 @@ function toRest(fullPath: string, mount: Mount): string {
   return fullPath;
 }
 
-/** 收集请求中所有 X-Folder-Password 头（可重复多个），作为客户端已知密码集合。 */
+/** 收集请求中所有 X-Folder-Password 头，作为客户端已知密码集合。
+ *  注意：Fetch 规范的 Headers.forEach 会把同名重复头合并成逗号分隔的单个值，
+ *  因此需要按逗号拆分，以支持前端 append 多个密码的场景。
+ */
 function collectPws(c: Context<{ Bindings: Env }>): string[] {
   const out: string[] = [];
   c.req.raw.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'x-folder-password') out.push(value);
+    if (key.toLowerCase() === 'x-folder-password') {
+      for (const v of value.split(',')) {
+        const t = v.trim();
+        if (t) out.push(t);
+      }
+    }
   });
   return out;
 }

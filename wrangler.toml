@@ -1,6 +1,9 @@
 name = "elist"
 main = "./src/index.ts"
 compatibility_date = "2025-04-04"
+# 部署/自动部署时保留配置外的既有变量与密钥（如 Dashboard 里设的 AUTH_* secret），
+# 防止 Git 集成每次 push 自动部署把手工设的密钥清掉。
+keep_vars = true
 
 # 静态前端（SPA）由 Workers Assets 托管，边缘就近返回，毫秒级。
 # /api/* 与 /dav/* 不命中静态文件，自动交由 Worker 脚本处理。

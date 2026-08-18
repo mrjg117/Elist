@@ -23,7 +23,7 @@ async function apiList(path, fresh = false) {
   const r = await fetch('/api/list?' + params.toString(), { headers: pwHeaders() });
   if (r.status === 403) {
     const body = await r.json().catch(() => ({}));
-    return { needPassword: true, lockedAt: body.lockedAt };
+    return { needPassword: true, lockedAt: body.lockedAt, received: body.received };
   }
   if (!r.ok) throw new Error('list failed ' + r.status);
   return { entries: await r.json() };
@@ -40,15 +40,17 @@ async function getLink(path) {
   return r.json();
 }
 
-/** 弹窗输入密码，返回输入的密码或 null（取消）。 */
-function askPassword(hintPath) {
+/** 弹窗输入密码，返回输入的密码或 null（取消）。hint 为可选诊断提示（显示在输入框下方）。 */
+function askPassword(hintPath, hint) {
   return new Promise((resolve) => {
     const modal = document.getElementById('pwModal');
     const input = document.getElementById('pwInput');
     const ok = document.getElementById('pwOk');
     const cancel = document.getElementById('pwCancel');
     const title = document.getElementById('pwTitle');
+    const hintEl = document.getElementById('pwHint');
     if (title) title.textContent = hintPath && hintPath !== '/' ? `请输入 ${hintPath} 的密码` : '请输入密码';
+    if (hintEl) hintEl.textContent = hint || '';
     input.value = '';
     modal.classList.add('show');
     input.focus();
@@ -81,7 +83,10 @@ async function openPath(path, fresh = false) {
     return;
   }
   if (res.needPassword) {
-    const pw = await askPassword(res.lockedAt || path);
+    const hint = res.received
+      ? `服务端已收到 ${res.received} 个密码，仍未解锁 ${res.lockedAt || path}；检查该层 .passwd 内容或输入的密码。`
+      : '';
+    const pw = await askPassword(res.lockedAt || path, hint);
     if (pw === null) {
       listEl.innerHTML = '<div class="empty">已取消</div>';
       return;

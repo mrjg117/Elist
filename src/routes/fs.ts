@@ -93,7 +93,7 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
   const fresh = isFresh(c);
   const gate = await checkPathPassword(path, pws, readText, fresh);
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const cacheKey = mount.mount + rest;
   let entries = fresh ? null : getListing(cacheKey);
@@ -121,7 +121,7 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
@@ -140,7 +140,7 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';

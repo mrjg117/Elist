@@ -36,6 +36,7 @@
     .pwmodal.show { display:flex; }
     .pwbox { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:18px; width:min(92vw,320px); }
     .pwtitle { font-weight:600; margin-bottom:12px; }
+    .pwhint { font-size:12px; color:var(--muted); margin-top:8px; min-height:14px; line-height:1.4; }
     .pwbox .pw { width:100%; box-sizing:border-box; }
     .pwrow { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
     .btn { padding:6px 14px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
@@ -66,6 +67,7 @@
   <div id="pwModal" class="pwmodal"><div class="pwbox">
     <div class="pwtitle" id="pwTitle">该目录需要密码</div>
     <input id="pwInput" class="pw" type="password" placeholder="请输入密码" autocomplete="off" />
+    <div id="pwHint" class="pwhint"></div>
     <div class="pwrow">
       <button id="pwCancel" class="btn">取消</button>
       <button id="pwOk" class="btn primary">确定</button>

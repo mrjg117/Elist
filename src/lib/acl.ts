@@ -91,7 +91,7 @@ export async function filterHidden<T extends { name: string }>(
   const results = await Promise.all(
     entries.map(async (e) => ({
       e,
-      hidden: await isHidden(parentDir, e.name, readText),
+      hidden: await isHidden(parentDir, e.name, readText, fresh),
     }))
   );
   return results.filter((r) => !r.hidden).map((r) => r.e);

@@ -28,6 +28,25 @@ function collectPws(c: Context<{ Bindings: Env }>): string[] {
   c.req.raw.headers.forEach((value, key) => {
     if (key.toLowerCase() === 'x-folder-password') out.push(value);
   });
+  // WebDAV 客户端（rclone / RaiDrive / Windows 资源管理器等）不会发 X-Folder-Password，
+  // 只会发 HTTP Basic Auth。把 Basic 的「用户名 + 密码」都作为候选密码：
+  //   - 只设密码位：可解锁所有 .passwd 含该密码的层级；
+  //   - 两层密码不同：用户名=P1、密码=P2，两个候选各满足一层。
+  const auth = c.req.header('Authorization') || '';
+  if (auth.toLowerCase().startsWith('basic ')) {
+    try {
+      const decoded = atob(auth.slice(6).trim());
+      const i = decoded.indexOf(':');
+      if (i >= 0) {
+        const user = decoded.slice(0, i);
+        const pass = decoded.slice(i + 1);
+        if (user) out.push(user);
+        if (pass) out.push(pass);
+      }
+    } catch {
+      // base64 非法则忽略，按无密码处理
+    }
+  }
   return out;
 }
 

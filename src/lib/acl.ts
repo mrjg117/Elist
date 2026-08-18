@@ -59,30 +59,25 @@ export async function checkPathPassword(
   return { ok: true };
 }
 
-/** 某条目是否应被隐藏（在父目录的 .hidden 清单中）。 */
+/** 某条目是否应被隐藏（该条目路径下存在 .hidden 文件）。
+ *  语义：entryPath/.hidden 存在 → 隐藏 entryPath 本身。
+ */
 export async function isHidden(
-  parentDir: string,
-  entryName: string,
+  entryPath: string,
   readText: ReadText,
   fresh = false
 ): Promise<boolean> {
-  let hidden = fresh ? undefined : getAcl(parentDir)?.hidden;
+  let hidden = fresh ? undefined : getAcl(entryPath)?.selfHidden;
   if (hidden === undefined) {
-    hidden = await readText(parentDir + '/.hidden');
-    setAcl(parentDir, { hidden });
+    const content = await readText(entryPath + '/.hidden');
+    hidden = content !== null; // 文件存在即隐藏
+    setAcl(entryPath, { selfHidden: hidden });
   }
-  if (hidden === null) return false;
-  const set = new Set(
-    hidden
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-  );
-  return set.has(entryName);
+  return hidden === true;
 }
 
-/** 过滤掉隐藏条目，返回完整 Entry[]。 */
-export async function filterHidden<T extends { name: string }>(
+/** 过滤掉隐藏条目（条目自身路径下有 .hidden 文件）。 */
+export async function filterHidden<T extends { name: string; path: string }>(
   parentDir: string,
   entries: T[],
   readText: ReadText,
@@ -91,7 +86,7 @@ export async function filterHidden<T extends { name: string }>(
   const results = await Promise.all(
     entries.map(async (e) => ({
       e,
-      hidden: await isHidden(parentDir, e.name, readText, fresh),
+      hidden: await isHidden(e.path, readText, fresh),
     }))
   );
   return results.filter((r) => !r.hidden).map((r) => r.e);

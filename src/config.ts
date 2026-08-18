@@ -39,7 +39,6 @@ export function getMounts(env: Env): Mount[] {
         title: mp.title,
         cache: mp.cache,
         hide: !!mp.hide,
-        passwd: mp.passwd,
         sort: mp.sort,
         addition,
       });

@@ -1,39 +1,70 @@
-// 极简前端 SPA：浏览 + 密码(?pw 级联) + 搜索 + 排序 + 预览（全部经 302 直链，Worker 不搬字节）。
-const state = { path: '/', passwords: {}, sort: 'name_asc' };
+// 极简前端 SPA：浏览 + 弹窗密码(X-Folder-Password 头) + 搜索 + 排序 + 预览。
+// 密码不进 URL：经请求头传递，地址栏始终干净。下载/预览走 /api/link 拿直链 JSON。
+const state = { path: '/', pwSet: new Set(), sort: 'name_asc' };
+const PW_HEADER = 'X-Folder-Password';
 
 function esc(s) {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-/** 沿路径向上找最近已知密码，实现密码级联（进入子目录沿用父门禁密码）。 */
-function pwFor(path) {
-  const parts = path.split('/').filter(Boolean);
-  let acc = '';
-  for (const p of parts) {
-    acc += '/' + p;
-    if (state.passwords[acc]) return state.passwords[acc];
-  }
-  return '';
-}
-
-function downloadUrl(path) {
-  const pw = pwFor(path);
-  return `/api/download?path=${encodeURIComponent(path)}${pw ? '&pw=' + encodeURIComponent(pw) : ''}`;
-}
-
-function listUrl(path, sort) {
-  const pw = pwFor(path);
-  const params = new URLSearchParams({ path });
-  if (sort) params.set('sort', sort);
-  if (pw) params.set('pw', pw);
-  return `/api/list?${params.toString()}`;
+// 客户端已知密码集合：进入受保护层级时弹窗收集，存入 Set。
+// 每个请求把集合内所有密码以重复 X-Folder-Password 头带上，后端逐层校验
+// （父目录 + 子目录各有 .passwd 时，需两层密码都满足 = 子层重新鉴权）。
+function pwHeaders() {
+  const h = new Headers();
+  for (const pw of state.pwSet) h.append(PW_HEADER, pw);
+  return h;
 }
 
 async function apiList(path) {
-  const r = await fetch(listUrl(path, state.sort));
-  if (r.status === 403) return { needPassword: true };
+  const params = new URLSearchParams({ path });
+  if (state.sort) params.set('sort', state.sort);
+  const r = await fetch('/api/list?' + params.toString(), { headers: pwHeaders() });
+  if (r.status === 403) {
+    const body = await r.json().catch(() => ({}));
+    return { needPassword: true, lockedAt: body.lockedAt };
+  }
   if (!r.ok) throw new Error('list failed ' + r.status);
   return { entries: await r.json() };
+}
+
+/** 取文件直链（经 /api/link，密码走头），返回 { url, cacheControl }。 */
+async function getLink(path) {
+  const r = await fetch('/api/link?path=' + encodeURIComponent(path), { headers: pwHeaders() });
+  if (r.status === 403) {
+    const body = await r.json().catch(() => ({}));
+    throw { needPassword: true, lockedAt: body.lockedAt };
+  }
+  if (!r.ok) throw new Error('link failed ' + r.status);
+  return r.json();
+}
+
+/** 弹窗输入密码，返回输入的密码或 null（取消）。 */
+function askPassword(hintPath) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('pwModal');
+    const input = document.getElementById('pwInput');
+    const ok = document.getElementById('pwOk');
+    const cancel = document.getElementById('pwCancel');
+    const title = document.getElementById('pwTitle');
+    if (title) title.textContent = hintPath && hintPath !== '/' ? `请输入 ${hintPath} 的密码` : '请输入密码';
+    input.value = '';
+    modal.classList.add('show');
+    input.focus();
+    const done = (val) => {
+      modal.classList.remove('show');
+      ok.onclick = null;
+      cancel.onclick = null;
+      input.onkeydown = null;
+      resolve(val);
+    };
+    ok.onclick = () => done(input.value);
+    cancel.onclick = () => done(null);
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') done(input.value);
+      else if (e.key === 'Escape') done(null);
+    };
+  });
 }
 
 async function openPath(path) {
@@ -49,9 +80,12 @@ async function openPath(path) {
     return;
   }
   if (res.needPassword) {
-    const pw = prompt('该目录需要密码：');
-    if (pw === null) return;
-    state.passwords[path] = pw;
+    const pw = await askPassword(res.lockedAt || path);
+    if (pw === null) {
+      listEl.innerHTML = '<div class="empty">已取消</div>';
+      return;
+    }
+    state.pwSet.add(pw);
     return openPath(path);
   }
   // 服务端已排序（文件夹优先），前端不再重排
@@ -86,9 +120,22 @@ function fmtSize(n) {
   return n.toFixed(1) + ' ' + u[i];
 }
 
-function preview(path, name) {
+async function preview(path, name) {
   const lower = name.toLowerCase();
-  const url = downloadUrl(path);
+  let url;
+  try {
+    const link = await getLink(path);
+    url = link.url;
+  } catch (e) {
+    if (e && e.needPassword) {
+      const pw = await askPassword(e.lockedAt || state.path);
+      if (pw === null) return;
+      state.pwSet.add(pw);
+      return preview(path, name);
+    }
+    alert('预览失败：' + (e.message || e));
+    return;
+  }
   let inner = '';
   if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(lower)) {
     inner = `<img src="${url}" />`;
@@ -99,7 +146,7 @@ function preview(path, name) {
   } else if (/\.pdf$/.test(lower)) {
     inner = `<iframe src="${url}"></iframe>`;
   } else {
-    // 其他类型：直接触发下载（浏览器跟随 302 直链）
+    // 其他类型：直接用直链触发下载（浏览器跟随 302 直链，无密码暴露）
     window.location.href = url;
     return;
   }
@@ -130,15 +177,21 @@ document.getElementById('sort').addEventListener('change', (e) => {
   openPath(state.path);
 });
 
-// 搜索（现搜 + 后端内存索引）
+// 搜索（现搜 + 后端内存索引）；密码走头
 document.getElementById('search').addEventListener('input', async (e) => {
   const q = e.target.value.trim();
   const listEl = document.getElementById('list');
   if (!q) return openPath(state.path);
-  const pw = pwFor(state.path);
-  const params = new URLSearchParams({ q, path: state.path });
-  if (pw) params.set('pw', pw);
-  const r = await fetch(`/api/search?${params.toString()}`);
+  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(state.path)}`, {
+    headers: pwHeaders(),
+  });
+  if (r.status === 403) {
+    const body = await r.json().catch(() => ({}));
+    const pw = await askPassword(body.lockedAt || state.path);
+    if (pw === null) return;
+    state.pwSet.add(pw);
+    return document.getElementById('search').dispatchEvent(new Event('input'));
+  }
   const entries = await r.json();
   listEl.innerHTML = entries.length
     ? entries

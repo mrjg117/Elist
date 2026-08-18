@@ -1,74 +1,54 @@
-import { sha256Hex, verifyTotp } from './crypto';
-
-/**
- * 文件夹级 / 挂载级 访问门禁：密码 + 隐藏。
- * 标记文件随数据走（存储内），零 KV/D1/SQL：
- *   <dir>/.passwd   -> 该目录的访问门禁 verifier（见下方格式）
- *   <dir>/.hidden   -> 每行一个待隐藏条目名称
- *
- * verifier 格式（.passwd 文件内容 / 挂载级 passwd 字段 同此）：
- *   sha256:<hex>         固定密码：hex = sha256(用户所输密码)
- *   <hex>                兼容旧版：整行即 sha256(密码) hex
- *   dyn:<base>           动态(按天)：期望值 = sha256(base + YYYYMMDD)，用户输 base+YYYYMMDD
- *   dynn:<base>          动态(按小时)：期望值 = sha256(base + YYYYMMDDHH)
- *   totp:<base32>        TOTP 门禁：用户输 6 位动态码（配合固定密码做二因素）
- * readText: 由具体驱动提供（读取存储内文件文本），不存在返回 null。
- */
-
 export type ReadText = (path: string) => Promise<string | null>;
 
-/** 当前日期分量（服务端时区）。 */
-function ymd(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
-}
-function ymdh(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}`;
-}
+/**
+ * 文件夹级访问门禁：仅基于存储内 .passwd 明文文件。零密码学、零 KV/D1/SQL。
+ *
+ *   <dir>/.passwd   -> 该目录访问密码（每行一个明文；多行=多把钥匙，便于轮换/过渡）
+ *   <dir>/.hidden   -> 每行一个待隐藏条目名称
+ *
+ * 门禁语义：访问某路径时，其自身及所有祖先目录的 .passwd 都需满足（级联）。
+ * 路径上每个存在 .passwd 的目录，都必须被"客户端已知密码集合"中至少一个命中，
+ * 否则拒绝 —— 因此子文件夹若有自己的 .passwd，进入时必须重新输入该层密码（重新鉴权）。
+ * 若子层 .passwd 也包含上层密码，则上层密码已满足两层，无需重复输入。
+ * .passwd 不存在/为空 = 该层公开。
+ *
+ * readText 约定：传入"完整展示路径"（如 /s3/photos/secret），由调用方负责把
+ * 完整路径换算成盘内相对路径(rest) 再交给具体驱动。
+ */
 
 /**
- * 校验一个 verifier 与用户提供密码是否匹配。
- * verifier 为空/空白 = 无门禁（公开）。
- * provided 为空且存在门禁 = 拒绝。
+ * 校验完整路径的访问权限：沿路径逐级检查 .passwd（级联）。
+ * provided 为客户端已知密码集合（可多个，分别来自不同层级的 .passwd 解锁）。
+ * 路径上每个存在 .passwd 的目录，都必须被 provided 中至少一个密码命中，否则拒绝。
+ *
+ * 语义示例：
+ *   /A 有 .passwd=A1，/A/B 有 .passwd=B1
+ *   -> 进 /A 需 A1；进 /A/B 需 A1 且 B1（子层重新鉴权，前端会再弹窗要 B1）
+ *   -> 若 /A/B 的 .passwd 也含 A1，则 A1 已满足两层，无需重复弹窗
+ *
+ * readText 接收完整展示路径；provided 取自 X-Folder-Password 头（可重复多个）。
  */
-export async function verifyPassword(
-  verifier: string | undefined,
-  provided: string | undefined
-): Promise<boolean> {
-  if (!verifier || !verifier.trim()) return true; // 无门禁
-  if (!provided) return false;
-  const line = verifier.split('\n').map((l) => l.trim()).find(Boolean) || '';
-  if (!line) return true;
-
-  if (line.startsWith('sha256:')) {
-    return (await sha256Hex(provided)).toLowerCase() === line.slice(7).toLowerCase();
-  }
-  if (line.startsWith('dyn:')) {
-    const exp = (await sha256Hex(line.slice(4) + ymd())).toLowerCase();
-    return (await sha256Hex(provided)).toLowerCase() === exp;
-  }
-  if (line.startsWith('dynn:')) {
-    const exp = (await sha256Hex(line.slice(5) + ymdh())).toLowerCase();
-    return (await sha256Hex(provided)).toLowerCase() === exp;
-  }
-  if (line.startsWith('totp:')) {
-    return verifyTotp(line.slice(5), provided.trim());
-  }
-  // 旧版兼容：整行作为 sha256(密码) hex
-  return (await sha256Hex(provided)).toLowerCase() === verifier.trim().toLowerCase();
-}
-
-/** 校验目录密码（读该目录的 .passwd）。无 .passwd 视为公开。 */
-export async function checkFolderPassword(
-  dirPath: string,
-  providedPlain: string | undefined,
+export async function checkPathPassword(
+  fullPath: string,
+  provided: string[],
   readText: ReadText
-): Promise<boolean> {
-  const content = await readText(joinPath(dirPath, '.passwd'));
-  return verifyPassword(content ?? undefined, providedPlain);
+): Promise<{ ok: boolean; lockedAt?: string }> {
+  const segs = fullPath.split('/').filter(Boolean);
+  let acc = '';
+  for (const s of segs) {
+    acc += '/' + s;
+    const content = await readText(acc + '/.passwd');
+    if (content === null) continue; // 无 .passwd = 该层公开
+    const lines = content
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (lines.length === 0) continue; // 空文件 = 无门禁
+    if (!provided.some((p) => lines.includes(p))) {
+      return { ok: false, lockedAt: acc };
+    }
+  }
+  return { ok: true };
 }
 
 /** 某条目是否应被隐藏（在父目录的 .hidden 清单中）。 */
@@ -77,7 +57,7 @@ export async function isHidden(
   entryName: string,
   readText: ReadText
 ): Promise<boolean> {
-  const content = await readText(joinPath(parentDir, '.hidden'));
+  const content = await readText(parentDir + '/.hidden');
   if (content === null) return false;
   const set = new Set(
     content
@@ -103,10 +83,5 @@ export async function filterHidden<T extends { name: string }>(
   return results.filter((r) => !r.hidden).map((r) => r.e);
 }
 
-function joinPath(dir: string, file: string): string {
-  if (dir.endsWith('/')) return dir + file;
-  return dir + '/' + file;
-}
-
 /** 标记文件本身不应出现在列表里。 */
-export const MARKER_FILES = new Set(['.passwd', '.hidden', '.crypt']);
+export const MARKER_FILES = new Set(['.passwd', '.hidden']);

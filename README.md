@@ -2,7 +2,7 @@
 
 边缘函数部署的**只读多盘网盘聚合工具**。把对象存储（S3 / R2 / OSS / COS / MinIO）、OneDrive（E5 证书 / 个人版）等多个"盘"聚合成一个统一的浏览界面，下载走 **302 直链**（浏览器原生多线程、不耗边缘 CPU）。
 
-> 仓库内部代码名为 `edge-multidrive`（Cloudflare Worker 名），产品名叫 **Elist**，一个东西。
+> 仓库名与产品名统一为 **Elist**（Cloudflare Worker 名）。
 
 ---
 
@@ -15,9 +15,7 @@
   - `s3`：S3 / R2 / OSS / COS / MinIO，手写 AWS SigV4（头签名 + 预签名 URL），不引 aws-sdk。
 - **302 直链下载**：浏览器直接从源站拉文件，边端不搬字节、天然支持 Range 多线程。
 - **只读 WebDAV 服务端**：`OPTIONS / PROPFIND / GET / HEAD`，配合支持 WebDAV 的播放器/挂载工具只读浏览。
-- **文件夹密码门禁**（随数据走，零 KV/D1/SQL）：
-  - 固定密码（`sha256:`）、动态密码（按天 `dyn:` / 按小时 `dynn:`）、TOTP 动态码（`totp:`，建议做二因素）。
-  - 挂载级 `passwd` 与文件夹级 `.passwd` 可叠加。
+- **文件夹密码门禁**（随数据走，零 KV/D1/SQL）：在文件夹内放 `.passwd` 明文密码文件即生效；访问时弹窗输入密码（密码走请求头、不进 URL）；自身及所有祖先目录的 `.passwd` 都会级联生效；子文件夹若有自己的 `.passwd` 会触发重新鉴权。支持每行一个密码（多把钥匙 / 轮换过渡）。网页端与 WebDAV 端逻辑完全一致。
 - **隐藏**：
   - 文件夹级：同目录放 `.hidden`，每行一个条目名，从列表消失（路径仍可硬进）。
   - 挂载级：`hide: true` 让该盘不显示在根目录（仅界面隐藏，硬路径仍可访问）。
@@ -97,13 +95,13 @@ Cloudflare 还支持「连接 GitHub 仓库」做 Git 集成：push 即部署（
 | `onedrive-personal` | `tenant_id`(填 `common`), `client_id`, `refresh_token`(可选 `client_secret`) |
 | `s3` | `endpoint`, `bucket`, `access_key_id`, `secret_access_key`(可选 `region`) |
 
-挂载项可选字段：`title` / `cache`(覆盖 CACHE_CONTROL) / `hide` / `passwd`(挂载级门禁) / `sort`。
+挂载项可选字段：`title` / `cache`(覆盖 CACHE_CONTROL) / `hide` / `sort`。
 
 ### 公用变量（`wrangler.toml` `[vars]` 或 secret）
 
 | 变量 | 作用 | 默认 |
 |------|------|------|
-| `SITE_TITLE` | 站点标题 | `edge-multidrive` |
+| `SITE_TITLE` | 站点标题 | `Elist` |
 | `CACHE_CONTROL` | 下载 302 的 Cache-Control | `public, max-age=300` |
 | `SORT` | 默认列表排序 | `name_asc` |
 | `MOUNT_ORDER` | 根目录盘顺序，逗号分隔（如 `/od,/s3`） | 配置顺序 |
@@ -114,28 +112,31 @@ Cloudflare 还支持「连接 GitHub 仓库」做 Git 集成：push 即部署（
 
 ---
 
-## 密码与隐藏（随数据走）
+## 密码与隐藏（随数据走，纯明文）
 
-在**目标文件夹**内放置标记文件即可，无需改配置：
+在**目标文件夹**内放置标记文件即可，无需改配置、无需计算哈希：
 
-**`.passwd`**（该文件夹访问门禁）内容（一行）：
+**.passwd**（该文件夹访问门禁）内容，每行一个明文密码（多行 = 多把钥匙，便于轮换/过渡期）：
 
 ```
-sha256:abc123...            # 固定密码：hex = sha256(用户所输)
-# 或兼容旧版：整行即 sha256(密码) hex
-dyn:MyBase                  # 动态(按天)：期望值 = sha256(MyBase + YYYYMMDD)，用户输 MyBase+YYYYMMDD
-dynn:MyBase                 # 动态(按小时)：期望值 = sha256(MyBase + YYYYMMDDHH)
-totp:JBSWY3DPEHPK3PXP       # TOTP 门禁：用户输 6 位动态码（建议配合固定密码做二因素）
+MySecret123
+TempGuest2026
 ```
 
-**`.hidden`**（该文件夹内要隐藏的条目，每行一个名称）：
+- 访问该文件夹时前端弹窗输入密码；密码经 `X-Folder-Password` **请求头**发送，**不进入 URL**（地址栏、历史、服务器日志都不会出现密码）。
+- **级联 + 子层重新鉴权**：路径自身及所有祖先目录的 `.passwd` 都会生效。前端把已解锁的各层密码一并带上、后端逐层校验。因此子文件夹若有自己的 `.passwd`，进入时会**再次弹窗**要求该层密码（重新鉴权）；若子层 `.passwd` 也含上层密码，则上层已满足两层，不重复弹窗。
+- 同一密码贯穿整棵子树：只需在子树最上层目录放一个 `.passwd`，子目录无需再放（上层密码自动贯通）。
+- 不同层级不同密码：在子目录额外放一个 `.passwd`（内容可与上层不同），进入子层时重新鉴权。
+- 手机上直接编辑盘里的 `.passwd` 文件即可改密码，零工具、零哈希计算。
+
+**.hidden**（该文件夹内要隐藏的条目，每行一个名称）：
 
 ```
 secret-folder
 private-notes.txt
 ```
 
-- 前端用 `?pw=xxxx` 传密码，并沿路径级联（进入子目录沿用父门禁密码）。
+- 隐藏仅不显示在列表（路径仍可硬进）。
 - `hide`（挂载级）仅隐藏根目录入口，硬路径仍可访问。
 
 ---
@@ -143,6 +144,11 @@ private-notes.txt
 ## WebDAV
 
 只读 WebDAV 挂在 `/dav` 下（`OPTIONS` / `PROPFIND` / `GET` / `HEAD`），可对接支持 WebDAV 的播放器或只读挂载。写操作返回 `405`。
+
+门禁与网页端**完全一致**：`/dav` 下访问受 `.passwd` 保护的路径同样要求密码，逻辑（级联 + 子层重新鉴权）与浏览器端相同；密码经 `X-Folder-Password` **请求头**传递（与网页端同一套），`.passwd` / `.hidden` 不会在 PROPFIND 中暴露。
+
+> 多数 WebDAV 客户端（Windows 映射、Finder、部分播放器）不直接支持自定义请求头。需用支持自定义 Header 的客户端访问受保护目录，例如 `rclone`：
+> `rclone lsf remote:/secret --header "X-Folder-Password: 你的密码"`（或在 `webdav` remote 配置里加 `headers = X-Folder-Password: 你的密码`）。
 
 ---
 
@@ -170,9 +176,10 @@ private-notes.txt
 ## 已知限制
 
 - 只读：不支持上传/删除（边缘函数做读写受 CPU/时长限制，且违背"302 直链、边缘薄壳"定位）。
-- 文件夹密码是**访问门禁**，不是文件字节加密（资源开销仅为一个短字符串哈希/校验，几乎为零）。
+- 文件夹密码是**访问门禁**，不是文件字节加密（资源开销仅为一个短字符串比对，几乎为零）。
 - 个人版 OneDrive 的 `refresh_token` 会过期，需重新授权。
 - S3 当前为 path-style 寻址；virtual-hosted 后续补。
+- 不同层级可用不同密码：子目录放自己的 `.passwd` 即触发重新鉴权（见"密码与隐藏"段）。
 
 ---
 
@@ -181,7 +188,7 @@ private-notes.txt
 ```bash
 npm install
 npm run dev          # 本地开发（wrangler dev）
-npm run check        # tsc 类型检查
+npm run build        # tsc 类型检查
 npm run deploy       # 部署
 ```
 
@@ -194,6 +201,6 @@ src/
   config.ts           AUTH_* 解析 + 根目录盘列表
   drivers/            s3 / onedrive / base / registry
   lib/                acl(门禁/隐藏) / cache(内存) / crypto / dispatch / xml
-  routes/             fs(列表/下载/搜索) / webdav
+  routes/             fs(列表/下载/搜索/直链) / webdav
   web/                前端 SPA（index.html + app.js）
 ```

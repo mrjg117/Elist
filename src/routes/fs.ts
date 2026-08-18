@@ -1,10 +1,9 @@
 import type { Context } from 'hono';
-import type { Env, Entry } from '../types';
+import type { Env, Entry, Mount } from '../types';
 import { dispatch } from '../lib/dispatch';
 import {
-  checkFolderPassword,
+  checkPathPassword,
   filterHidden,
-  verifyPassword,
   MARKER_FILES,
 } from '../lib/acl';
 import { getListing, setListing, getIndex, setIndex } from '../lib/cache';
@@ -14,6 +13,23 @@ import { getRoots } from '../config';
 function parentDir(path: string): string {
   const i = path.lastIndexOf('/');
   return i <= 0 ? '/' : path.slice(0, i);
+}
+
+/** 完整展示路径 -> 盘内相对路径(rest)，交给驱动 readText。 */
+function toRest(fullPath: string, mount: Mount): string {
+  if (mount.mount === '/') return fullPath;
+  if (fullPath === mount.mount) return '/';
+  if (fullPath.startsWith(mount.mount + '/')) return fullPath.slice(mount.mount.length);
+  return fullPath;
+}
+
+/** 收集请求中所有 X-Folder-Password 头（可重复多个），作为客户端已知密码集合。 */
+function collectPws(c: Context<{ Bindings: Env }>): string[] {
+  const out: string[] = [];
+  c.req.raw.headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'x-folder-password') out.push(value);
+  });
+  return out;
 }
 
 type SortKey = 'name' | 'time' | 'size' | 'type';
@@ -46,12 +62,13 @@ function sortEntries<T extends Entry>(entries: T[], spec?: string): T[] {
 }
 
 /**
- * GET /api/list?path=/s3/photos[&pw=xxx][&sort=time_desc]
- * 根目录(/)返回盘列表；其余返回目录列表 + 门禁 + 隐藏过滤 + 排序 + 内存缓存。
+ * GET /api/list?path=/s3/photos[&sort=time_desc]
+ * 根目录(/)返回盘列表；其余返回目录列表 + 级联门禁 + 隐藏过滤 + 排序 + 内存缓存。
+ * 密码经 X-Folder-Password 请求头传递（可多个），不进 URL。
  */
 export async function handleList(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path') || '/';
-  const pw = c.req.query('pw') || c.req.header('X-Folder-Password') || '';
+  const pws = collectPws(c);
 
   // 根目录：展示盘列表（hide 的盘已剔除）
   if (path === '/' || path === '') {
@@ -64,13 +81,11 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   }
 
   const { driver, rest, mount } = await dispatch(c.env, path);
-  const readText = (p: string) => driver.readText(p);
+  const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 门禁：挂载级 passwd 与文件夹级 .passwd 都满足才放行（可叠加）
-  const gateOk =
-    (await verifyPassword(mount.passwd, pw)) &&
-    (await checkFolderPassword(path, pw || undefined, readText));
-  if (!gateOk) return c.json({ error: 'password_required' }, 403);
+  // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
+  const gate = await checkPathPassword(path, pws, readText);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
 
   const cacheKey = mount.mount + rest;
   let entries = getListing(cacheKey);
@@ -86,20 +101,38 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * GET /api/download?path=/s3/photos/a.jpg[&pw=xxx]  -> 302 直链
+ * GET /api/link?path=/s3/photos/a.jpg
+ * 校验通过后返回直链 JSON { url, cacheControl }。前端拿它做预览/下载，
+ * 密码不进任何 URL（302 目标签名的存储直链同样无密码）。
+ */
+export async function handleLink(c: Context<{ Bindings: Env }>) {
+  const path = c.req.query('path');
+  if (!path) return c.json({ error: 'path required' }, 400);
+  const pws = collectPws(c);
+  const { driver, rest, mount } = await dispatch(c.env, path);
+  const readText = (full: string) => driver.readText(toRest(full, mount));
+
+  const gate = await checkPathPassword(parentDir(path), pws, readText);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
+
+  const url = await driver.link(rest);
+  const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
+  return c.json({ url, cacheControl: cc });
+}
+
+/**
+ * GET /api/download?path=/s3/photos/a.jpg  -> 302 直链（兼容无头/脚本场景）
+ * 密码经 X-Folder-Password 头（不再支持 ?pw=）。
  */
 export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
-  const pw = c.req.query('pw') || c.req.header('X-Folder-Password') || '';
+  const pws = collectPws(c);
   const { driver, rest, mount } = await dispatch(c.env, path);
-  const readText = (p: string) => driver.readText(p);
+  const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 文件所在目录需满足门禁（若有）
-  const gateOk =
-    (await verifyPassword(mount.passwd, pw)) &&
-    (await checkFolderPassword(parentDir(path), pw || undefined, readText));
-  if (!gateOk) return c.json({ error: 'password_required' }, 403);
+  const gate = await checkPathPassword(parentDir(path), pws, readText);
+  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
@@ -110,23 +143,31 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * GET /api/search?q=foo&path=/s3[&pw=xxx]
+ * GET /api/search?q=foo&path=/s3
  * 现搜 + 内存索引（S3 flat 扫描 / OneDrive 递归）；零 KV/D1/SQL。
+ * 结果按门禁过滤（受保护路径不出现在结果里）。
  */
 export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const q = (c.req.query('q') || '').toLowerCase();
   const path = c.req.query('path') || '/';
   if (!q) return c.json([], 200);
-  const { driver, rest, mountPath } = await dispatch(c.env, path);
+  const pws = collectPws(c);
+  const { driver, rest, mount } = await dispatch(c.env, path);
+  const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const idxKey = mountPath + rest;
+  const idxKey = mount.mount + rest;
   let all = getIndex(idxKey);
   if (!all) {
     all = await driver.walk(rest); // 访问即预热索引（fire-and-forget 可后续加）
     setIndex(idxKey, all);
   }
-  const results = all
+  const matched = all
     .filter((e) => e.name.toLowerCase().includes(q))
     .slice(0, 200);
-  return c.json(results);
+  const allowed: Entry[] = [];
+  for (const e of matched) {
+    const g = await checkPathPassword(e.path, pws, readText);
+    if (g.ok) allowed.push(e);
+  }
+  return c.json(allowed);
 }

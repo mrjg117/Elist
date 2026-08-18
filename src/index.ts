@@ -3,7 +3,7 @@ import type { Env } from './types';
 import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
-import { handleList, handleDownload, handleSearch } from './routes/fs';
+import { handleList, handleDownload, handleSearch, handleLink } from './routes/fs';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
 
@@ -18,12 +18,13 @@ const app = new Hono<{ Bindings: Env }>();
 // 公用配置（标题、排序等），供前端读取
 app.get('/api/config', (c) => {
   return c.json({
-    title: c.env.SITE_TITLE || 'edge-multidrive',
+    title: c.env.SITE_TITLE || 'Elist',
     sort: c.env.SORT || 'name_asc',
   });
 });
 
 app.get('/api/list', handleList);
+app.get('/api/link', handleLink);
 app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
 app.all('/dav', webdavHandler);

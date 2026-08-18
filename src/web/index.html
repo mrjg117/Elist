@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Edge MultiDrive</title>
+  <title>Elist</title>
   <style>
     :root { --bg:#fff; --fg:#1a1a1a; --line:#e5e5e5; --accent:#2563eb; --muted:#888; }
     @media (prefers-color-scheme: dark) {
@@ -31,11 +31,20 @@
     #modal .box img, #modal .box video, #modal .box iframe { max-width:88vw; max-height:82vh; display:block; border:0; }
     .close { float:right; cursor:pointer; color:var(--muted); }
     input.pw { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); }
+    /* 密码弹窗 */
+    .pwmodal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:20; }
+    .pwmodal.show { display:flex; }
+    .pwbox { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:18px; width:min(92vw,320px); }
+    .pwtitle { font-weight:600; margin-bottom:12px; }
+    .pwbox .pw { width:100%; box-sizing:border-box; }
+    .pwrow { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+    .btn { padding:6px 14px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   </style>
 </head>
 <body>
   <header>
-    <div class="title">📦 MultiDrive</div>
+    <div class="title">📦 Elist</div>
     <div id="crumbs"></div>
     <select id="sort" title="排序">
       <option value="name_asc">名称 ↑</option>
@@ -52,6 +61,15 @@
   <main id="list"></main>
 
   <div id="modal"><div class="box"><span class="close" onclick="closeModal()">✕</span><div id="modalBody"></div></div></div>
+
+  <div id="pwModal" class="pwmodal"><div class="pwbox">
+    <div class="pwtitle" id="pwTitle">该目录需要密码</div>
+    <input id="pwInput" class="pw" type="password" placeholder="请输入密码" autocomplete="off" />
+    <div class="pwrow">
+      <button id="pwCancel" class="btn">取消</button>
+      <button id="pwOk" class="btn primary">确定</button>
+    </div>
+  </div></div>
 
   <script src="/app.js"></script>
 </body>

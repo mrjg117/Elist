@@ -27,7 +27,6 @@ export interface MountPoint {
   title?: string;     // 展示名（可选）
   cache?: string;     // 覆盖全局 CACHE_CONTROL（可选）
   hide?: boolean;     // 仅界面隐藏（根目录列表不显示），硬路径仍可访问
-  passwd?: string;    // 挂载级访问门禁（verifier，同 .passwd 格式）；可叠加文件夹级 .passwd
   sort?: string;      // 本盘列表排序，覆盖全局 SORT（如 time_desc）
 }
 
@@ -60,7 +59,6 @@ export interface Mount {
   title?: string;
   cache?: string;     // 覆盖全局缓存
   hide?: boolean;     // 仅界面隐藏
-  passwd?: string;    // 挂载级访问门禁 verifier
   sort?: string;      // 本盘列表排序
   addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）
 }

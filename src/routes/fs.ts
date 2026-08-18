@@ -85,14 +85,28 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path') || '/';
   const pws = collectPws(c);
 
-  // 根目录：展示盘列表（hide 的盘已剔除）
+  // 根目录：展示盘列表（hide 的盘已剔除 + 检查每个挂载根路径的 .hidden）
   if (path === '/' || path === '') {
-    const roots = getRoots(c.env).map((r) => ({
-      name: r.title || r.path,
-      path: r.path,
-      isDir: true,
-    }));
-    return c.json(roots);
+    const roots = getRoots(c.env);
+    const fresh = isFresh(c);
+    // 检查每个挂载根路径是否有 .hidden 文件（存在即隐藏）
+    const visibleRoots = await Promise.all(
+      roots.map(async (r) => {
+        // 找到对应的 driver 来读取 .hidden
+        const { driver, rest, mount } = await dispatch(c.env, r.path);
+        const readText = (full: string) => driver.readText(toRest(full, mount));
+        const hidden = await isHidden(r.path, readText, fresh);
+        return { root: r, hidden };
+      })
+    );
+    const result = visibleRoots
+      .filter((v) => !v.hidden)
+      .map((v) => ({
+        name: v.root.title || v.root.path,
+        path: v.root.path,
+        isDir: true,
+      }));
+    return c.json(result);
   }
 
   const { driver, rest, mount } = await dispatch(c.env, path);

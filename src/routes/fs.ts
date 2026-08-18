@@ -4,6 +4,7 @@ import { dispatch } from '../lib/dispatch';
 import {
   checkPathPassword,
   filterHidden,
+  isHidden,
   MARKER_FILES,
 } from '../lib/acl';
 import { getListing, setListing, searchListings } from '../lib/cache';

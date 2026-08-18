@@ -149,35 +149,6 @@ export class S3Driver extends BaseDriver implements Driver {
   }
 
   /** 全量索引（搜索用）：无 delimiter 翻页扫描。 */
-  async walk(rest: string): Promise<Entry[]> {
-    const prefix = this.toAccountPath(rest).replace(/^\//, '');
-    const out: Entry[] = [];
-    let token = '';
-    do {
-      const q = new URLSearchParams({ 'list-type': '2', prefix });
-      if (token) q.set('continuation-token', token);
-      const url = `${this.endpoint}/${this.bucket}?${q.toString()}`;
-      const headers = await this.signHeaders('GET', url, paramsToObj(q), EMPTY_SHA256);
-      const r = await fetch(url, { headers });
-      if (!r.ok) throw new Error(`S3 walk failed: ${r.status}`);
-      const xml = await r.text();
-      const re = /<Contents>([\s\S]*?)<\/Contents>/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(xml))) {
-        const b = m[1];
-        const key = (b.match(/<Key>([\s\S]*?)<\/Key>/) || [])[1];
-        if (!key || key.endsWith('/')) continue;
-        const size = +(b.match(/<Size>(\d+)<\/Size>/) || [])[1] || 0;
-        const lm = (b.match(/<LastModified>([\s\S]*?)<\/LastModified>/) || [])[1];
-        const name = key.split('/').pop() || '';
-        out.push({ name, path: this.toPath('/' + key), isDir: false, size, modified: lm });
-      }
-      const mt = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/);
-      token = mt ? mt[1] : '';
-    } while (token);
-    return out;
-  }
-
   private parseList(xml: string, baseRest: string): Entry[] {
     const entries: Entry[] = [];
     const acctPrefix = this.toAccountPath(baseRest).replace(/^\//, '');

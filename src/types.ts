@@ -71,8 +71,6 @@ export interface Driver {
   link(path: string): Promise<string>;
   /** 读取文件文本内容（用于 .passwd/.hidden 标记文件解析）。不存在返回 null。 */
   readText(path: string): Promise<string | null>;
-  /** 递归收集某路径下全部条目（供搜索建索引用）。 */
-  walk(path: string): Promise<Entry[]>;
 }
 
 export interface Env {

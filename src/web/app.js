@@ -16,9 +16,10 @@ function pwHeaders() {
   return h;
 }
 
-async function apiList(path) {
+async function apiList(path, fresh = false) {
   const params = new URLSearchParams({ path });
   if (state.sort) params.set('sort', state.sort);
+  if (fresh) params.set('fresh', '1');
   const r = await fetch('/api/list?' + params.toString(), { headers: pwHeaders() });
   if (r.status === 403) {
     const body = await r.json().catch(() => ({}));
@@ -67,14 +68,14 @@ function askPassword(hintPath) {
   });
 }
 
-async function openPath(path) {
+async function openPath(path, fresh = false) {
   state.path = path;
   renderCrumbs();
   const listEl = document.getElementById('list');
   listEl.innerHTML = '<div class="empty">加载中…</div>';
   let res;
   try {
-    res = await apiList(path);
+    res = await apiList(path, fresh);
   } catch (e) {
     listEl.innerHTML = `<div class="empty">错误：${esc(e.message)}</div>`;
     return;
@@ -176,6 +177,9 @@ document.getElementById('sort').addEventListener('change', (e) => {
   state.sort = e.target.value;
   openPath(state.path);
 });
+
+// 刷新按钮：强制回源当前目录（绕过缓存，立即反映 .passwd / 文件的改动）
+document.getElementById('refresh').addEventListener('click', () => openPath(state.path, true));
 
 // 搜索（现搜 + 后端内存索引）；密码走头
 document.getElementById('search').addEventListener('input', async (e) => {

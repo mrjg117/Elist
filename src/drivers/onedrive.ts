@@ -133,26 +133,6 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     return r.text();
   }
 
-  /** 递归索引（搜索用）：逐层 children + @odata.nextLink 翻页；节流+退避。 */
-  async walk(rest: string): Promise<Entry[]> {
-    const out: Entry[] = [];
-    const stack: string[] = [this.toAccountPath(rest)];
-    while (stack.length) {
-      const cur = stack.pop()!;
-      let url: string | null = this.addr(cur);
-      while (url) {
-        const data = await this.graphGet(url);
-        for (const it of data.value || []) {
-          const e = this.toEntry(cur, it);
-          out.push(e);
-          if (e.isDir) stack.push(cur === '/' ? '/' + it.name : cur + '/' + it.name);
-        }
-        url = data['@odata.nextLink'] || null;
-      }
-    }
-    return out;
-  }
-
   private toEntry(parentAccountPath: string, it: any): Entry {
     const isDir = !!it.folder;
     const name = it.name;

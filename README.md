@@ -19,10 +19,11 @@
   - 文件夹级：同目录放 `.hidden`，每行一个条目名，从列表消失（路径仍可硬进）。
   - 挂载级：`hide: true` 让该盘不显示在根目录（仅界面隐藏，硬路径仍可访问）。
 - **列表排序**：全局 `SORT` + 单盘 `sort` 覆盖 + 前端实时切换；文件夹永远排前。
-- **文件搜索**：现搜 + per-isolate 内存索引（S3 flat 扫描 / OneDrive 递归），零 KV。
+- **文件搜索**：被动缓存搜索——只在用户已浏览过的目录（惰性缓存）里匹配，绝不主动 walk / 全量扫描，零 KV、零后端请求。
 - **预览**：图片 / 视频 / 音频 / PDF 经 302 直链前端直接预览。
+- **缓存与刷新**：`.passwd` / `.hidden` 读取结果惰性缓存（per-isolate 内存，5 分钟 TTL，比列表缓存 10 分钟更短，让密码改动更快生效）；前端「🔄 刷新」按钮对当前目录发 `?fresh=1` 强制回源，立即反映密码/文件改动（边缘架构下为 per-isolate 缓存，刷新只保证当前请求视图即时刷新）。
 - **存储 0 依赖**：不使用 KV / D1 / SQL；状态 = env(secret) + 存储内标记文件。构建/运行可用 Hono + Vite 等依赖。
-- **证书鉴权**：组织租户证书模式免失效；管理端可用私钥签名 + 公钥验签（应用层，非 mTLS）。
+- **证书鉴权**：OneDrive 组织租户证书 app-only 模式免失效（RS256 JWT 自签 client_assertion，无 refresh_token）。
 - **离线下载（可选扩展）**：通过 webhook → GitHub Actions → `rclone copyurl` 把文件推入网盘，绕开边缘时长限制。
 
 ---
@@ -33,12 +34,12 @@
 请求 /s3/photos/2024/a.jpg
    -> Workers 边缘调度（findMount 最长前缀匹配）
    -> 对应驱动实例（S3 / OneDrive）
-   -> list / link(302) / walk(搜索)
-   -> 列表/索引缓存进 per-isolate 内存 Map（TTL，零 KV）
+   -> list / link(302)
+   -> 目录列表惰性缓存进 per-isolate 内存 Map（TTL，零 KV）；搜索只读该缓存，不主动扫描
    -> 前端 SPA（Workers Assets 边缘托管）
 ```
 
-- **驱动抽象**：所有后端实现同一 `Driver` 接口（`list` / `link` / `readText` / `walk`）。加新后端 = 注册一个新驱动类，无特判。
+- **驱动抽象**：所有后端实现同一 `Driver` 接口（`list` / `link` / `readText`）。加新后端 = 注册一个新驱动类，无特判。
 - **配置即数据**：多盘完全由配置决定，代码不变。
 - **轻量**：Hono + Web Standard API（WinterCG），Cloudflare Workers 与阿里云 ESA 通用。
 

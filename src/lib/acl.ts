@@ -1,5 +1,7 @@
 export type ReadText = (path: string) => Promise<string | null>;
 
+import { getAcl, setAcl } from './cache';
+
 /**
  * 文件夹级访问门禁：仅基于存储内 .passwd 明文文件。零密码学、零 KV/D1/SQL。
  *
@@ -31,15 +33,21 @@ export type ReadText = (path: string) => Promise<string | null>;
 export async function checkPathPassword(
   fullPath: string,
   provided: string[],
-  readText: ReadText
+  readText: ReadText,
+  fresh = false
 ): Promise<{ ok: boolean; lockedAt?: string }> {
   const segs = fullPath.split('/').filter(Boolean);
   let acc = '';
   for (const s of segs) {
     acc += '/' + s;
-    const content = await readText(acc + '/.passwd');
-    if (content === null) continue; // 无 .passwd = 该层公开
-    const lines = content
+    // .passwd 读取走 ACL 缓存；fresh 时强制回源重读（配合前端"刷新"按钮）
+    let passwd = fresh ? undefined : getAcl(acc)?.passwd;
+    if (passwd === undefined) {
+      passwd = await readText(acc + '/.passwd');
+      setAcl(acc, { passwd });
+    }
+    if (passwd === null) continue; // 无 .passwd = 该层公开
+    const lines = passwd
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean);
@@ -55,12 +63,17 @@ export async function checkPathPassword(
 export async function isHidden(
   parentDir: string,
   entryName: string,
-  readText: ReadText
+  readText: ReadText,
+  fresh = false
 ): Promise<boolean> {
-  const content = await readText(parentDir + '/.hidden');
-  if (content === null) return false;
+  let hidden = fresh ? undefined : getAcl(parentDir)?.hidden;
+  if (hidden === undefined) {
+    hidden = await readText(parentDir + '/.hidden');
+    setAcl(parentDir, { hidden });
+  }
+  if (hidden === null) return false;
   const set = new Set(
-    content
+    hidden
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean)
@@ -72,7 +85,8 @@ export async function isHidden(
 export async function filterHidden<T extends { name: string }>(
   parentDir: string,
   entries: T[],
-  readText: ReadText
+  readText: ReadText,
+  fresh = false
 ): Promise<T[]> {
   const results = await Promise.all(
     entries.map(async (e) => ({

@@ -2,7 +2,7 @@ import type { Driver, Mount, Env, Entry } from '../types';
 
 /**
  * 驱动基类：提供 挂载路径 <-> 账号内路径 的换算，以及 readText 的骨架。
- * 具体驱动只需实现 list/link/walk 与 readText 的取数细节。
+ * 具体驱动只需实现 list/link 与 readText 的取数细节。
  *
  * 关键换算（v3）：
  *   rest（盘内相对路径，如 /2024/a.jpg）
@@ -42,5 +42,4 @@ export abstract class BaseDriver implements Driver {
   abstract list(path: string): Promise<Entry[]>;
   abstract link(path: string): Promise<string>;
   abstract readText(path: string): Promise<string | null>;
-  abstract walk(path: string): Promise<Entry[]>;
 }

@@ -6,7 +6,7 @@ import {
   filterHidden,
   MARKER_FILES,
 } from '../lib/acl';
-import { getListing, setListing, getIndex, setIndex } from '../lib/cache';
+import { getListing, setListing, searchListings } from '../lib/cache';
 import { getRoots } from '../config';
 
 /** 取父目录路径（用于文件下载时校验所在目录密码）。 */
@@ -30,6 +30,13 @@ function collectPws(c: Context<{ Bindings: Env }>): string[] {
     if (key.toLowerCase() === 'x-folder-password') out.push(value);
   });
   return out;
+}
+
+/** 是否强制回源（绕过 listing/ACL 缓存）：?fresh=1 或 X-Fresh: 1 头。供前端"刷新"按钮触发。 */
+function isFresh(c: Context<{ Bindings: Env }>): boolean {
+  if (c.req.query('fresh') === '1') return true;
+  const h = c.req.header('x-fresh');
+  return h === '1' || h === 'true';
 }
 
 type SortKey = 'name' | 'time' | 'size' | 'type';
@@ -84,16 +91,17 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
-  const gate = await checkPathPassword(path, pws, readText);
+  const fresh = isFresh(c);
+  const gate = await checkPathPassword(path, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
 
   const cacheKey = mount.mount + rest;
-  let entries = getListing(cacheKey);
+  let entries = fresh ? null : getListing(cacheKey);
   if (!entries) {
     entries = await driver.list(rest);
     setListing(cacheKey, entries);
   }
-  let visible = await filterHidden(path, entries, readText);
+  let visible = await filterHidden(path, entries, readText, fresh);
   visible = visible.filter((e) => !MARKER_FILES.has(e.name));
   const spec = c.req.query('sort') || mount.sort || c.env.SORT || 'name_asc';
   const sorted = sortEntries(visible, spec);
@@ -112,7 +120,7 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText);
+  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
 
   const url = await driver.link(rest);
@@ -131,7 +139,7 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText);
+  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt }, 403);
 
   const url = await driver.link(rest);
@@ -144,30 +152,19 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
 
 /**
  * GET /api/search?q=foo&path=/s3
- * 现搜 + 内存索引（S3 flat 扫描 / OneDrive 递归）；零 KV/D1/SQL。
- * 结果按门禁过滤（受保护路径不出现在结果里）。
+ * 被动缓存搜索：只在用户已浏览过的目录（惰性缓存）里匹配，绝不主动 walk / 全量扫描。
+ * 结果按当前盘范围(mount.mount)过滤。未浏览过的目录不会出现。
+ * 零 KV/D1/SQL，不发出任何后端请求（天然规避边缘函数出网次数限制）。
  */
 export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const q = (c.req.query('q') || '').toLowerCase();
   const path = c.req.query('path') || '/';
   if (!q) return c.json([], 200);
-  const pws = collectPws(c);
-  const { driver, rest, mount } = await dispatch(c.env, path);
-  const readText = (full: string) => driver.readText(toRest(full, mount));
+  const { mount } = await dispatch(c.env, path);
 
-  const idxKey = mount.mount + rest;
-  let all = getIndex(idxKey);
-  if (!all) {
-    all = await driver.walk(rest); // 访问即预热索引（fire-and-forget 可后续加）
-    setIndex(idxKey, all);
-  }
-  const matched = all
-    .filter((e) => e.name.toLowerCase().includes(q))
+  // 缓存内的条目均来自已鉴权浏览，无需逐条再验门禁；仅做盘范围过滤。
+  const matched = searchListings(q)
+    .filter((e) => e.path.startsWith(mount.mount))
     .slice(0, 200);
-  const allowed: Entry[] = [];
-  for (const e of matched) {
-    const g = await checkPathPassword(e.path, pws, readText);
-    if (g.ok) allowed.push(e);
-  }
-  return c.json(allowed);
+  return c.json(matched);
 }

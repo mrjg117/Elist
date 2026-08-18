@@ -25,6 +25,7 @@ export class S3Driver extends BaseDriver implements Driver {
   private bucket = '';
   private ak = '';
   private sk = '';
+  private linkTtl = 3600;      // S3 下载直链有效期（秒），可由 S3_LINK_TTL 覆盖
 
   init(mount: Mount, _env: Env): void {
     super.init(mount);
@@ -35,6 +36,8 @@ export class S3Driver extends BaseDriver implements Driver {
     this.bucket = a.bucket;
     this.ak = a.access_key_id;
     this.sk = a.secret_access_key;
+    const ttl = Number(_env?.S3_LINK_TTL);
+    this.linkTtl = Number.isFinite(ttl) && ttl > 0 ? ttl : 3600;
   }
 
   // ---- SigV4 ----
@@ -134,7 +137,7 @@ export class S3Driver extends BaseDriver implements Driver {
   }
 
   async link(rest: string): Promise<string> {
-    return this.presignGet(this.toAccountPath(rest).replace(/^\//, ''), 3600);
+    return this.presignGet(this.toAccountPath(rest).replace(/^\//, ''), this.linkTtl);
   }
 
   async readText(rest: string): Promise<string | null> {

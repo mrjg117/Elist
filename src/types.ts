@@ -32,14 +32,13 @@ export interface MountPoint {
 
 /** 一个账号的环境变量 JSON（AUTH_<NAME> 的值）。 */
 export interface AuthAccount {
-  type: string;       // onedrive-e5 | onedrive-personal | s3 | (未来扩展)
+  type: string;       // onedrive | s3 | (未来扩展)
   // —— 各类型鉴权字段（宽松，避免每加一种就改类型）——
   tenant_id?: string;
   client_id?: string;
   cert_thumbprint?: string;
-  cert_key?: string;          // E5 证书私钥 PEM
-  refresh_token?: string;     // 个人版
-  client_secret?: string;     // 个人版可选
+  cert_key?: string;          // 组织租户证书私钥 PEM
+  user_id?: string;           // 组织租户下要挂载的用户的 UPN 或 objectId（app-only 无 /me，必须指定）
   endpoint?: string;          // S3
   region?: string;            // S3
   bucket?: string;            // S3
@@ -77,10 +76,10 @@ export interface Driver {
 }
 
 export interface Env {
-  ADMIN_PUBKEY?: string;   // 管理端验签公钥
   SITE_TITLE?: string;     // 公用：站点标题
   CACHE_CONTROL?: string;  // 公用：下载缓存控制
   SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
   MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
+  S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒），默认 3600
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

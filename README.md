@@ -1,6 +1,6 @@
 # Elist
 
-边缘函数部署的**只读多盘网盘聚合工具**。把对象存储（S3 / R2 / OSS / COS / MinIO）、OneDrive（E5 证书 / 个人版）等多个"盘"聚合成一个统一的浏览界面，下载走 **302 直链**（浏览器原生多线程、不耗边缘 CPU）。
+边缘函数部署的**只读多盘网盘聚合工具**。把对象存储（S3 兼容：S3 / R2 / OSS / COS / MinIO）与 OneDrive（组织租户证书鉴权）两类"盘"聚合成一个统一的浏览界面，下载走 **302 直链**（浏览器原生多线程、不耗边缘 CPU）。
 
 > 仓库名与产品名统一为 **Elist**（Cloudflare Worker 名）。
 
@@ -9,9 +9,8 @@
 ## 功能特性
 
 - **多盘聚合**：一个账号可挂 N 个目录，多个账号并行。盘 = 配置数据，不是代码。
-- **多种存储后端**：
-  - `onedrive-e5`：Azure **证书凭据**（RS256 JWT 自签 `client_assertion`），无 refresh_token、免 2 年失效。
-  - `onedrive-personal`：delegated `refresh_token`（会过期，技术限制）。
+- **两类存储后端**（不分 Provider，靠字段区分）：
+  - `onedrive`：组织租户 Azure **证书凭据**（RS256 JWT 自签 `client_assertion`），无 refresh_token、免 2 年失效（E5/E3/商业版/教育版/开发者租户均可）。
   - `s3`：S3 / R2 / OSS / COS / MinIO，手写 AWS SigV4（头签名 + 预签名 URL），不引 aws-sdk。
 - **302 直链下载**：浏览器直接从源站拉文件，边端不搬字节、天然支持 Range 多线程。
 - **只读 WebDAV 服务端**：`OPTIONS / PROPFIND / GET / HEAD`，配合支持 WebDAV 的播放器/挂载工具只读浏览。
@@ -23,7 +22,7 @@
 - **文件搜索**：现搜 + per-isolate 内存索引（S3 flat 扫描 / OneDrive 递归），零 KV。
 - **预览**：图片 / 视频 / 音频 / PDF 经 302 直链前端直接预览。
 - **存储 0 依赖**：不使用 KV / D1 / SQL；状态 = env(secret) + 存储内标记文件。构建/运行可用 Hono + Vite 等依赖。
-- **证书鉴权**：E5 证书模式免失效；管理端可用私钥签名 + 公钥验签（应用层，非 mTLS）。
+- **证书鉴权**：组织租户证书模式免失效；管理端可用私钥签名 + 公钥验签（应用层，非 mTLS）。
 - **离线下载（可选扩展）**：通过 webhook → GitHub Actions → `rclone copyurl` 把文件推入网盘，绕开边缘时长限制。
 
 ---
@@ -57,7 +56,7 @@ wrangler secret put AUTH_R2_BACKUP
 # ...按下方配置 schema 填
 
 # 3. 公用变量（非敏感，可放 wrangler.toml [vars]）
-#    SITE_TITLE / CACHE_CONTROL / SORT / MOUNT_ORDER
+#    SITE_TITLE / CACHE_CONTROL / SORT / MOUNT_ORDER / S3_LINK_TTL
 
 # 4. 部署
 wrangler deploy
@@ -75,11 +74,12 @@ Cloudflare 还支持「连接 GitHub 仓库」做 Git 集成：push 即部署（
 
 ```json
 {
-  "type": "onedrive-e5",
+  "type": "onedrive",
   "tenant_id": "<租户GUID>",
   "client_id": "<应用ID>",
   "cert_thumbprint": "<证书SHA1指纹>",
   "cert_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----",
+  "user_id": "<要挂载用户的UPN或objectId，如 xxx@yyy.onmicrosoft.com>",
   "mounts": [
     { "path": "/od", "root": "/", "title": "我的网盘", "sort": "time_desc" },
     { "path": "/od-photos", "root": "/Photos", "title": "照片", "hide": false }
@@ -91,8 +91,7 @@ Cloudflare 还支持「连接 GitHub 仓库」做 Git 集成：push 即部署（
 
 | type | 必填 |
 |------|------|
-| `onedrive-e5` | `tenant_id`, `client_id`, `cert_thumbprint`, `cert_key` |
-| `onedrive-personal` | `tenant_id`(填 `common`), `client_id`, `refresh_token`(可选 `client_secret`) |
+| `onedrive` | `tenant_id`, `client_id`, `cert_thumbprint`, `cert_key`, `user_id`(要挂载用户的 UPN 或 objectId) |
 | `s3` | `endpoint`, `bucket`, `access_key_id`, `secret_access_key`(可选 `region`) |
 
 挂载项可选字段：`title` / `cache`(覆盖 CACHE_CONTROL) / `hide` / `sort`。
@@ -105,6 +104,7 @@ Cloudflare 还支持「连接 GitHub 仓库」做 Git 集成：push 即部署（
 | `CACHE_CONTROL` | 下载 302 的 Cache-Control | `public, max-age=300` |
 | `SORT` | 默认列表排序 | `name_asc` |
 | `MOUNT_ORDER` | 根目录盘顺序，逗号分隔（如 `/od,/s3`） | 配置顺序 |
+| `S3_LINK_TTL` | S3 下载直链有效期（秒），弱网续传可加大 | `3600` |
 
 ### 排序取值
 
@@ -177,7 +177,7 @@ private-notes.txt
 
 - 只读：不支持上传/删除（边缘函数做读写受 CPU/时长限制，且违背"302 直链、边缘薄壳"定位）。
 - 文件夹密码是**访问门禁**，不是文件字节加密（资源开销仅为一个短字符串比对，几乎为零）。
-- 个人版 OneDrive 的 `refresh_token` 会过期，需重新授权。
+- OneDrive 仅支持组织租户证书鉴权（app-only），个人消费版 Microsoft 账户不适用。
 - S3 当前为 path-style 寻址；virtual-hosted 后续补。
 - 不同层级可用不同密码：子目录放自己的 `.passwd` 即触发重新鉴权（见"密码与隐藏"段）。
 

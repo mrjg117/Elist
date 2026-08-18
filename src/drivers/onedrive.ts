@@ -14,33 +14,29 @@ interface TokenCache {
 const tokenCache = new Map<string, TokenCache>();
 
 /**
- * OneDrive 驱动。
- * - E5 / 组织租户：Azure **证书凭据** client_credentials（RS256 JWT 自签 client_assertion），无 refresh_token、无 2 年失效。
- * - 个人版：delegated refresh_token（仍会过期，技术限制）。
+ * OneDrive 驱动（组织租户证书 app-only，全球版）。
+ * - Azure 证书凭据 client_credentials（RS256 JWT 自签 client_assertion），无 refresh_token、无 2 年失效。
  * - 下载：取 Graph 原生 `@microsoft.graph.downloadUrl` -> 302 直出（浏览器原生 Range 多线程）。
  * - 凭据（含证书私钥）随账号 JSON 经 secret 注入，不再用全局 env。
  */
 export class OneDriveDriver extends BaseDriver implements Driver {
-  private type: 'e5' | 'personal' = 'personal';
   private tenantId = '';
   private clientId = '';
   private thumbprint = '';
-  private certKeyPem = '';     // E5 证书私钥 PEM（来自账号 JSON，非全局 env）
-  private refreshToken = '';
-  private clientSecret = '';
+  private certKeyPem = '';     // 组织租户证书私钥 PEM（来自账号 JSON，非全局 env）
+  private userId = '';         // 要挂载的用户 UPN / objectId（app-only 无 /me，必须指定）
   private certKey: CryptoKey | null = null;
   private key = '';            // 缓存键（挂载 path+root）
 
   init(mount: Mount, _env: Env): void {
     super.init(mount);
     const a = mount.addition;
-    this.type = a.type === 'onedrive-e5' ? 'e5' : 'personal';
     this.tenantId = a.tenant_id || '';
     this.clientId = a.client_id || '';
     this.thumbprint = a.cert_thumbprint || '';
     this.certKeyPem = a.cert_key || '';
-    this.refreshToken = a.refresh_token || '';
-    this.clientSecret = a.client_secret || '';
+    this.userId = a.user_id || '';
+    if (!this.userId) throw new Error('onedrive app-only requires user_id (UPN or objectId)');
     this.key = mount.mount + (mount.root || '');
   }
 
@@ -48,24 +44,14 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     const cached = tokenCache.get(this.key);
     if (cached && Date.now() < cached.expireAt - 60_000) return cached.accessToken;
 
-    let token: string;
-    let expiresIn: number;
-    if (this.type === 'e5') {
-      const { token: t, expires_in } = await this.tokenByCert();
-      token = t;
-      expiresIn = expires_in;
-    } else {
-      const { token: t, expires_in } = await this.tokenByRefresh();
-      token = t;
-      expiresIn = expires_in;
-    }
-    tokenCache.set(this.key, { accessToken: token, expireAt: Date.now() + expiresIn * 1000 });
+    const { token, expires_in } = await this.tokenByCert();
+    tokenCache.set(this.key, { accessToken: token, expireAt: Date.now() + expires_in * 1000 });
     return token;
   }
 
   private async tokenByCert(): Promise<{ token: string; expires_in: number }> {
     const privPem = this.certKeyPem;
-    if (!privPem) throw new Error('cert_key not set for E5 mount');
+    if (!privPem) throw new Error('cert_key not set for onedrive mount');
     if (!this.certKey) this.certKey = await importRsaPrivateKey(privPem);
     const now = Math.floor(Date.now() / 1000);
     const header = { alg: 'RS256', typ: 'JWT', x5t: this.thumbprint };
@@ -95,43 +81,24 @@ export class OneDriveDriver extends BaseDriver implements Driver {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     });
-    if (!r.ok) throw new Error(`OD E5 token failed: ${r.status} ${await r.text()}`);
+    if (!r.ok) throw new Error(`OD token failed: ${r.status} ${await r.text()}`);
     const j = (await r.json()) as any;
     return { token: j.access_token, expires_in: j.expires_in };
   }
 
-  private async tokenByRefresh(): Promise<{ token: string; expires_in: number }> {
-    const body = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: this.clientId,
-      refresh_token: this.refreshToken,
-    });
-    if (this.clientSecret) body.set('client_secret', this.clientSecret);
-    const r = await fetch(TOKEN_URL(this.tenantId), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-    if (!r.ok) throw new Error(`OD refresh failed: ${r.status} ${await r.text()}`);
-    const j = (await r.json()) as any;
-    // 个人版 refresh 可能返回新的 refresh_token，更新缓存以便下次使用
-    if (j.refresh_token) this.refreshToken = j.refresh_token;
-    return { token: j.access_token, expires_in: j.expires_in };
-  }
-
-  /** 账号内绝对路径 -> Graph 列表地址。 */
+  /** 账号内绝对路径 -> Graph 列表地址（app-only 必须指定用户）。 */
   private addr(accountPath: string): string {
     const ap = accountPath.replace(/^\//, '');
-    if (!ap) return `${GRAPH}/me/drive/root/children`;
+    if (!ap) return `${GRAPH}/users/${encodeURIComponent(this.userId)}/drive/root/children`;
     const seg = ap.split('/').map(encodeURIComponent).join('/');
-    return `${GRAPH}/me/drive/root:/${seg}:/children`;
+    return `${GRAPH}/users/${encodeURIComponent(this.userId)}/drive/root:/${seg}:/children`;
   }
 
   private itemAddr(accountPath: string): string {
     const ap = accountPath.replace(/^\//, '');
-    if (!ap) return `${GRAPH}/me/drive/root`;
+    if (!ap) return `${GRAPH}/users/${encodeURIComponent(this.userId)}/drive/root`;
     const seg = ap.split('/').map(encodeURIComponent).join('/');
-    return `${GRAPH}/me/drive/root:/${seg}:`;
+    return `${GRAPH}/users/${encodeURIComponent(this.userId)}/drive/root:/${seg}:`;
   }
 
   private async graphGet(url: string, select = ''): Promise<any> {

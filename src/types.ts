@@ -82,7 +82,7 @@ export interface Driver {
   list(path: string): Promise<Entry[]>;
   /** 取下载直链（302 目标）。 */
   link(path: string): Promise<string>;
-  /** 读取文件文本内容（用于 .passwd/.hidden 标记文件解析）。不存在返回 null。 */
+  /** 读取文件文本内容。不存在返回 null。 */
   readText(path: string): Promise<string | null>;
   /** 读取文件二进制内容（用于 .elist.xlsx 配置）。不存在返回 null。 */
   readBinary(path: string): Promise<ArrayBuffer | null>;

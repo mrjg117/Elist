@@ -38,6 +38,9 @@ app.get('/api/admin/config', handleGetConfig);
 app.post('/api/admin/config', handleSetConfig);
 app.post('/api/admin/save', handleSaveConfig);
 
+// 文件管理API（需要管理员权限）
+app.route('/api/file', fileManagementApp);
+
 app.all('/dav', webdavHandler);
 app.all('/dav/', webdavHandler);
 app.all('/dav/*', webdavHandler);

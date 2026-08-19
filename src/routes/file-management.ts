@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
-import { Context } from 'hono';
+import type { Env } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { checkPathPassword } from '../lib/acl';
 import { getMounts } from '../config';
 
-const app = new Hono();
+const app = new Hono<{ Bindings: Env }>();
 
 /**
  * 文件管理 API - 需要管理员权限
@@ -12,15 +12,14 @@ const app = new Hono();
  */
 
 // 验证管理员权限
-async function requireAdmin(c: Context) {
+async function requireAdmin(c: any) {
   const adminPassword = c.req.header('X-Admin-Password');
   if (!adminPassword) {
     return c.json({ error: '需要管理员密码' }, 401);
   }
   
   // 从环境变量获取管理员密码
-  const env = c.env as any;
-  if (env.ADMIN_PASSWORD !== adminPassword) {
+  if (c.env.ADMIN_PASSWORD !== adminPassword) {
     return c.json({ error: '管理员密码错误' }, 403);
   }
   
@@ -28,7 +27,7 @@ async function requireAdmin(c: Context) {
 }
 
 // 写入文本文件
-app.post('/api/file/write-text', async (c) => {
+app.post('/write-text', async (c) => {
   const adminError = await requireAdmin(c);
   if (adminError) return adminError;
   
@@ -60,7 +59,7 @@ app.post('/api/file/write-text', async (c) => {
 });
 
 // 移动/重命名文件
-app.post('/api/file/move', async (c) => {
+app.post('/move', async (c) => {
   const adminError = await requireAdmin(c);
   if (adminError) return adminError;
   
@@ -100,7 +99,7 @@ app.post('/api/file/move', async (c) => {
 });
 
 // 删除文件
-app.post('/api/file/delete', async (c) => {
+app.post('/delete', async (c) => {
   const adminError = await requireAdmin(c);
   if (adminError) return adminError;
   
@@ -132,7 +131,7 @@ app.post('/api/file/delete', async (c) => {
 });
 
 // 创建目录
-app.post('/api/file/mkdir', async (c) => {
+app.post('/mkdir', async (c) => {
   const adminError = await requireAdmin(c);
   if (adminError) return adminError;
   

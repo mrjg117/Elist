@@ -37,15 +37,13 @@ export function setListing(key: string, entries: Entry[]): void {
   listingCache.set(key, { entries, expireAt: Date.now() + TTL_MS });
 }
 
-// ---- ACL 缓存（.passwd / .hidden 读取结果，短 TTL）----
-// 门禁校验逐层读 .passwd / 列目录读 .hidden 都是一次后端 fetch。
-// 缓存后同目录重复访问 = 0 次 fetch：既省后端压力，也规避边缘函数出网次数限制
-// （如阿里云 ESA 单次执行最多 4 个 fetch 的硬上限）。
+// ---- ACL 缓存（短 TTL）----
+// 门禁校验从 .elist.xlsx 配置读取，缓存在内存中。
 // TTL 比 listing(10m) 短（5m）：密码改动的传播延迟要更小。
 interface AclVal {
   passwd?: string | null; // undefined = 尚未加载
   hidden?: string | null; // undefined = 尚未加载（已废弃，保留兼容）
-  selfHidden?: boolean;   // undefined = 尚未加载；true = 该路径下存在 .hidden 文件
+  selfHidden?: boolean;   // undefined = 尚未加载
   expireAt: number;
 }
 const aclCache = new Map<string, AclVal>();

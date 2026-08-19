@@ -3,9 +3,11 @@ import type { Env } from './types';
 import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
-import { handleList, handleDownload, handleSearch, handleLink } from './routes/fs';
+import { handleList, handleDownload, handleSearch, handleLink, handleConfigSave, handleConfigClear } from './routes/fs';
+import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
+import { handleScheduled } from './e5rnl';
 
 // 注册驱动：网盘与 S3 只是表里的两项，无任何特判。
 // onedrive = 组织租户证书 app-only（全球版）；s3 = S3 兼容（R2/OSS/COS/MinIO 靠 endpoint 区分）。
@@ -26,6 +28,16 @@ app.get('/api/list', handleList);
 app.get('/api/link', handleLink);
 app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
+app.post('/api/config/save', handleConfigSave);
+app.post('/api/config/clear', handleConfigClear);
+
+// 管理员API
+app.post('/api/admin/login', handleLogin);
+app.post('/api/admin/logout', handleLogout);
+app.get('/api/admin/config', handleGetConfig);
+app.post('/api/admin/config', handleSetConfig);
+app.post('/api/admin/save', handleSaveConfig);
+
 app.all('/dav', webdavHandler);
 app.all('/dav/', webdavHandler);
 app.all('/dav/*', webdavHandler);
@@ -38,4 +50,9 @@ app.onError((err, c) => {
   return c.json({ error: 'internal_error' }, 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(handleScheduled(env));
+  },
+};

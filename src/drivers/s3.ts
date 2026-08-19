@@ -148,6 +148,27 @@ export class S3Driver extends BaseDriver implements Driver {
     return r.text();
   }
 
+  async readBinary(rest: string): Promise<ArrayBuffer | null> {
+    const url = await this.presignGet(this.toAccountPath(rest).replace(/^\//, ''), 60);
+    const r = await fetch(url);
+    if (r.status === 404) return null;
+    if (!r.ok) return null;
+    return r.arrayBuffer();
+  }
+
+  async writeBinary(rest: string, content: ArrayBuffer): Promise<void> {
+    const key = this.toAccountPath(rest).replace(/^\//, '');
+    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const bodyHash = await sha256Hex(content);
+    const headers = await this.signHeaders('PUT', url, {}, bodyHash);
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      body: content,
+    });
+    if (!r.ok) throw new Error(`S3 write failed: ${r.status}`);
+  }
+
   /** 全量索引（搜索用）：无 delimiter 翻页扫描。 */
   private parseList(xml: string, baseRest: string): Entry[] {
     const entries: Entry[] = [];

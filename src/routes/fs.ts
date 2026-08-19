@@ -8,7 +8,8 @@ import {
   MARKER_FILES,
 } from '../lib/acl';
 import { getListing, setListing, searchListings } from '../lib/cache';
-import { getRoots } from '../config';
+import { getRoots, getMounts } from '../config';
+import * as xlsxConfig from '../lib/xlsx-config';
 
 /** 取父目录路径（用于文件下载时校验所在目录密码）。 */
 function parentDir(path: string): string {
@@ -48,6 +49,105 @@ function isFresh(c: Context<{ Bindings: Env }>): boolean {
   return h === '1' || h === 'true';
 }
 
+/** 获取所有存储账号（从 AUTH_* 环境变量解析） */
+function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth: any }> {
+  const accounts: Array<{ name: string; type: string; auth: any }> = [];
+  
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith('AUTH_') && typeof value === 'string') {
+      try {
+        const auth = JSON.parse(value);
+        if (auth.type) {
+          accounts.push({ name: key.slice(5), type: auth.type, auth });
+        }
+      } catch {
+        // 忽略解析失败的
+      }
+    }
+  }
+  
+  return accounts;
+}
+
+/** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
+async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
+  if (xlsxConfig.isLoaded() && !fresh) return;
+
+  const configPath = c.env.CONFIG_PATH || '/';
+  const accounts = getAllAuthAccounts(c.env);
+
+  // 遍历所有存储账号，尝试读取 .elist.xlsx
+  for (const account of accounts) {
+    try {
+      const { getDriverClass } = await import('../drivers/registry');
+      const DriverClass = getDriverClass(account.type);
+      if (!DriverClass) continue;
+
+      const driver = new DriverClass();
+      await driver.init({
+        mount: '/',
+        root: configPath,
+        driver: account.type,
+        addition: account.auth,
+      }, c.env);
+
+      const xlsxPath = '/.elist.xlsx';
+      const content = await driver.readBinary(xlsxPath);
+      if (content) {
+        xlsxConfig.parseXlsx(content);
+        return;
+      }
+    } catch (e) {
+      // 读取失败，尝试下一个存储
+      continue;
+    }
+  }
+  
+  // 没有找到 .elist.xlsx，标记为已加载（空配置）
+  xlsxConfig.markLoaded();
+}
+
+/** 获取配置文件存放的存储位置（根据 CONFIG_AUTH 环境变量） */
+async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: any; rest: string } | null> {
+  const configAuth = c.env.CONFIG_AUTH;
+  const configPath = c.env.CONFIG_PATH || '/';
+  const accounts = getAllAuthAccounts(c.env);
+
+  if (accounts.length === 0) return null;
+
+  let targetAccount: { name: string; type: string; auth: any } | null = null;
+
+  if (!configAuth) {
+    // 未配置，使用第一个存储账号
+    targetAccount = accounts[0];
+  } else if (configAuth === ':first-onedrive') {
+    // 查找第一个 OneDrive 存储
+    targetAccount = accounts.find(a => a.type === 'onedrive') || null;
+  } else if (configAuth === ':first-s3') {
+    // 查找第一个 S3 存储
+    targetAccount = accounts.find(a => a.type === 's3') || null;
+  } else {
+    // 指定存储账号名（如 OD1）
+    targetAccount = accounts.find(a => a.name === configAuth) || null;
+  }
+
+  if (!targetAccount) return null;
+
+  const { getDriverClass } = await import('../drivers/registry');
+  const DriverClass = getDriverClass(targetAccount.type);
+  if (!DriverClass) return null;
+
+  const driver = new DriverClass();
+  await driver.init({
+    mount: '/',
+    root: configPath,
+    driver: targetAccount.type,
+    addition: targetAccount.auth,
+  }, c.env);
+
+  return { driver, rest: '/' };
+}
+
 type SortKey = 'name' | 'time' | 'size' | 'type';
 function parseSort(spec?: string): { key: SortKey; desc: boolean } {
   if (!spec) return { key: 'name', desc: false };
@@ -85,11 +185,14 @@ function sortEntries<T extends Entry>(entries: T[], spec?: string): T[] {
 export async function handleList(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path') || '/';
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 首次访问或强制刷新时加载 .elist.xlsx 配置
+  await loadXlsxConfig(c, fresh);
 
   // 根目录：展示盘列表（hide 的盘已剔除 + 检查每个挂载根路径的 .hidden）
   if (path === '/' || path === '') {
     const roots = getRoots(c.env);
-    const fresh = isFresh(c);
     // 检查每个挂载根路径是否有 .hidden 文件（存在即隐藏）
     const visibleRoots = await Promise.all(
       roots.map(async (r) => {
@@ -114,7 +217,6 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
-  const fresh = isFresh(c);
   const gate = await checkPathPassword(path, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
@@ -171,6 +273,66 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
     status: 302,
     headers: { Location: url, 'Cache-Control': cc },
   });
+}
+
+/**
+ * POST /api/config/save
+ * 保存 xlsx 配置到存储（将内存中的配置写回 .elist.xlsx）
+ */
+export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
+  if (!xlsxConfig.isDirty()) {
+    return c.json({ success: true, message: 'No changes to save' });
+  }
+
+  const body = await c.req.json();
+  const mountPath = body.mount; // 前端可以指定挂载点
+
+  let configMount;
+  if (mountPath) {
+    // 前端指定了挂载点
+    try {
+      const { driver, rest } = await dispatch(c.env, mountPath);
+      configMount = { driver, rest };
+    } catch (e) {
+      return c.json({ error: 'Invalid mount path' }, 400);
+    }
+  } else {
+    // 使用 CONFIG_MOUNT 环境变量或默认第一个挂载点
+    configMount = await getConfigMount(c);
+    if (!configMount) {
+      return c.json({ error: 'No mount point available for config storage' }, 500);
+    }
+  }
+
+  const { driver, rest } = configMount;
+  const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+
+  const content = xlsxConfig.generateXlsx();
+  await driver.writeBinary(xlsxPath, content);
+
+  xlsxConfig.clearDirty();
+  return c.json({ success: true });
+}
+
+/**
+ * POST /api/config/clear
+ * 清理缓存（先保存未保存的修改，再清空内存）
+ */
+export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
+  // 如果有未保存的修改，先保存
+  if (xlsxConfig.isDirty()) {
+    const configMount = await getConfigMount(c);
+    if (configMount) {
+      const { driver, rest } = configMount;
+      const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+      const content = xlsxConfig.generateXlsx();
+      await driver.writeBinary(xlsxPath, content);
+    }
+  }
+
+  // 清空内存
+  xlsxConfig.clearAll();
+  return c.json({ success: true });
 }
 
 /**

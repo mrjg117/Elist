@@ -29,6 +29,10 @@
     #modal.show { display:flex; }
     #modal .box { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:92vw; max-height:92vh; overflow:auto; }
     #modal .box img, #modal .box video, #modal .box iframe { max-width:88vw; max-height:82vh; display:block; border:0; }
+    #modal .box .code-preview { max-width:88vw; max-height:82vh; overflow:auto; background:#f5f5f5; padding:16px; border-radius:6px; font-family:'Courier New',monospace; font-size:13px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
+    @media (prefers-color-scheme: dark) {
+      #modal .box .code-preview { background:#1e1e1e; color:#d4d4d4; }
+    }
     .close { float:right; cursor:pointer; color:var(--muted); }
     input.pw { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); }
     /* 密码弹窗 */
@@ -41,12 +45,52 @@
     .pwrow { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
     .btn { padding:6px 14px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
     .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    
+    /* 左侧导航栏 */
+    #sidebar { position:fixed; left:0; top:57px; bottom:0; width:240px; background:var(--bg); border-right:1px solid var(--line); overflow-y:auto; z-index:4; transform:translateX(-100%); transition:transform .3s; }
+    #sidebar.open { transform:translateX(0); }
+    #sidebar .tree { padding:12px; }
+    #sidebar .tree-item { padding:6px 8px; cursor:pointer; border-radius:4px; font-size:14px; }
+    #sidebar .tree-item:hover { background:rgba(127,127,127,.08); }
+    #sidebar .tree-item.active { background:var(--accent); color:#fff; }
+    #sidebar .tree-children { margin-left:16px; }
+    
+    /* 视图切换 */
+    .view-toggle { display:flex; gap:4px; }
+    .view-btn { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
+    .view-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+    
+    /* 网格视图 */
+    .grid-view { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px; padding:12px; }
+    .grid-item { display:flex; flex-direction:column; align-items:center; padding:12px; border-radius:8px; cursor:pointer; transition:background .2s; }
+    .grid-item:hover { background:rgba(127,127,127,.08); }
+    .grid-item .thumb { width:100px; height:100px; display:flex; align-items:center; justify-content:center; background:rgba(127,127,127,.05); border-radius:6px; overflow:hidden; margin-bottom:8px; }
+    .grid-item .thumb img { width:100%; height:100%; object-fit:cover; }
+    .grid-item .thumb .icon { font-size:48px; }
+    .grid-item .name { font-size:13px; text-align:center; word-break:break-word; max-width:100%; }
+    
+    /* 列表视图 */
+    .list-view { padding:8px 16px 40px; }
+    
+    /* 切换按钮 */
+    #sidebar-toggle { position:fixed; left:8px; top:68px; z-index:6; padding:8px 12px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); cursor:pointer; }
+    body.sidebar-open #sidebar-toggle { left:248px; }
+    body.sidebar-open main { margin-left:240px; }
   </style>
 </head>
 <body>
+  <button id="sidebar-toggle">☰</button>
+  <div id="sidebar">
+    <div class="tree" id="tree"></div>
+  </div>
+  
   <header>
     <div class="title">📦 Elist</div>
     <div id="crumbs"></div>
+    <div class="view-toggle">
+      <button class="view-btn active" data-view="list">列表</button>
+      <button class="view-btn" data-view="grid">网格</button>
+    </div>
     <select id="sort" title="排序">
       <option value="name_asc">名称 ↑</option>
       <option value="name_desc">名称 ↓</option>
@@ -59,6 +103,9 @@
     </select>
     <input id="search" placeholder="搜索当前盘…" />
     <button id="refresh" class="btn" title="强制刷新当前目录（绕过缓存，立即反映密码/文件的改动）">🔄 刷新</button>
+    <button id="loginBtn" class="btn">🔐 登录</button>
+    <button id="logoutBtn" class="btn" style="display:none">🚪 退出</button>
+    <button id="saveConfigBtn" class="btn primary" style="display:none">💾 保存配置</button>
   </header>
   <main id="list"></main>
 
@@ -71,6 +118,40 @@
     <div class="pwrow">
       <button id="pwCancel" class="btn">取消</button>
       <button id="pwOk" class="btn primary">确定</button>
+    </div>
+  </div></div>
+
+  <div id="loginModal" class="pwmodal"><div class="pwbox">
+    <div class="pwtitle">管理员登录</div>
+    <input id="loginPassword" class="pw" type="password" placeholder="请输入管理员密码" autocomplete="off" />
+    <div class="pwrow">
+      <button id="loginCancel" class="btn">取消</button>
+      <button id="loginOk" class="btn primary">登录</button>
+    </div>
+  </div></div>
+
+  <div id="editModal" class="pwmodal"><div class="pwbox" style="width:min(92vw,500px)">
+    <div class="pwtitle" id="editTitle">编辑配置</div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;margin-bottom:4px;font-size:13px">路径</label>
+      <input id="editPath" class="pw" type="text" placeholder="/path/to/folder" />
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;margin-bottom:4px;font-size:13px">密码</label>
+      <input id="editPassword" class="pw" type="text" placeholder="留空表示无密码" />
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;margin-bottom:4px;font-size:13px">提示</label>
+      <input id="editHint" class="pw" type="text" placeholder="密码提示（可选）" />
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+        <input id="editHidden" type="checkbox" /> 隐藏此目录
+      </label>
+    </div>
+    <div class="pwrow">
+      <button id="editCancel" class="btn">取消</button>
+      <button id="editOk" class="btn primary">保存</button>
     </div>
   </div></div>
 

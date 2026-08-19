@@ -1,10 +1,14 @@
-import type { Mount, Env, AuthAccount } from './types';
+import type { Mount, Env, AuthAccount, MountConfig } from './types';
 
 /**
- * 从 env 解析多盘配置（v3）。
+ * 从 env 解析多盘配置（v4，变量拆分）。
  *
- * 设计：每账号一个 AUTH_<NAME> 变量（JSON），凭据只写一次，其下 mounts[] 列出该账号
- * 要挂的 N 个目录。解析时把每个账号展开成多个 Mount（目录级），按最长前缀匹配派发。
+ * 设计：
+ *   - AUTH_<NAME>：账号机密（type、凭据）
+ *   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
+ *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
+ *
+ * 解析时把每个账号展开成多个 Mount（目录级），按最长前缀匹配派发。
  * 零 KV/D1/SQL：改配置 = 改 env(secret) + 重部署（边缘秒级）。
  */
 
@@ -14,34 +18,55 @@ export function getMounts(env: Env): Mount[] {
   if (cached) return cached;
   const mounts: Mount[] = [];
 
+  // 收集所有 AUTH_XXX 和 MOUNT_XXX 变量
+  const authMap = new Map<string, AuthAccount>();
+  const mountMap = new Map<string, MountConfig>();
+
   for (const key of Object.keys(env)) {
-    if (!key.startsWith('AUTH_')) continue;
-    const raw = env[key];
-    if (!raw || typeof raw !== 'string') continue;
-
-    let acct: AuthAccount;
-    try {
-      acct = JSON.parse(raw) as AuthAccount;
-    } catch {
-      continue; // 解析失败的变量跳过，不阻塞其他账号
+    if (key.startsWith('AUTH_')) {
+      const name = key.slice(5); // 去掉 AUTH_ 前缀
+      const raw = env[key];
+      if (!raw || typeof raw !== 'string') continue;
+      try {
+        authMap.set(name, JSON.parse(raw) as AuthAccount);
+      } catch {
+        // 解析失败跳过
+      }
+    } else if (key.startsWith('MOUNT_')) {
+      const name = key.slice(6); // 去掉 MOUNT_ 前缀
+      const raw = env[key];
+      if (!raw || typeof raw !== 'string') continue;
+      try {
+        mountMap.set(name, JSON.parse(raw) as MountConfig);
+      } catch {
+        // 解析失败跳过
+      }
     }
-    if (!acct.type || !Array.isArray(acct.mounts)) continue;
+  }
 
-    // 该账号的鉴权字段（去掉 mounts，作为每个挂载点的 addition）
-    const addition: Record<string, any> = { ...acct };
-    delete addition.mounts;
+  // 配对 AUTH_XXX 和 MOUNT_XXX（后缀匹配）
+  for (const [name, mountConfig] of mountMap.entries()) {
+    const auth = authMap.get(name);
+    if (!auth || !auth.type) continue;
 
-    for (const mp of acct.mounts) {
-      mounts.push({
-        mount: normalize(mp.path || '/'),
-        root: normalize(mp.root || '/'),
-        driver: acct.type,
-        title: mp.title,
-        cache: mp.cache,
-        hide: !!mp.hide,
-        sort: mp.sort,
-        addition,
-      });
+    // 该账号的鉴权字段（作为每个挂载点的 addition）
+    const addition: Record<string, any> = { ...auth };
+
+    // 遍历 users 数组，展开所有挂载点
+    for (const user of mountConfig.users || []) {
+      for (const mp of user.mounts || []) {
+        mounts.push({
+          mount: normalize(mp.path || '/'),
+          root: normalize(mp.root || '/'),
+          driver: auth.type,
+          title: mp.title,
+          cache: mp.cache,
+          hide: !!mp.hide,
+          sort: mp.sort,
+          user_id: user.user_id,
+          addition,
+        });
+      }
     }
   }
 

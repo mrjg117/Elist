@@ -1,11 +1,11 @@
 /**
  * 全局类型定义。
  *
- * 配置架构（v3，用户方案）：
- *   - 每个账号 = 一个环境变量 AUTH_<NAME>，值为 JSON：
- *       { type, ...凭据字段..., mounts: [ {path, root, title?, cache?}, ... ] }
- *   - 凭据只在账号 JSON 里写一次；一个账号可挂 N 个目录（mounts）。
- *   - 公用变量（SITE_TITLE / CACHE_CONTROL）单独全局，不走账号变量。
+ * 配置架构（v4，变量拆分）：
+ *   - AUTH_<NAME>：账号机密（type、凭据等）
+ *   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
+ *   - ACL_KEY：xlsx 配置文件密码（可选）
+ *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
  *
  * 设计要点：所有存储后端（S3 / OneDrive / 未来 GDrive）实现同一 Driver 接口，
  * 对上层完全等价 -> 多盘 = 数据（配置）不是代码。
@@ -20,7 +20,7 @@ export interface Entry {
   mime?: string;
 }
 
-/** 账号 JSON 内的单个挂载点（目录）。 */
+/** 挂载点（目录）。 */
 export interface MountPoint {
   path: string;       // URL 前缀，如 /photos
   root: string;       // 账号内相对路径，如 /Photos；'/' 表示账号根
@@ -30,7 +30,13 @@ export interface MountPoint {
   sort?: string;      // 本盘列表排序，覆盖全局 SORT（如 time_desc）
 }
 
-/** 一个账号的环境变量 JSON（AUTH_<NAME> 的值）。 */
+/** 用户配置（MOUNT_<NAME> 中的 users 数组元素）。 */
+export interface UserMount {
+  user_id?: string;   // 用户标识（OneDrive 组织租户用，S3 可忽略）
+  mounts: MountPoint[];
+}
+
+/** 账号机密（AUTH_<NAME> 的值）：type + 凭据字段。 */
 export interface AuthAccount {
   type: string;       // onedrive | s3 | (未来扩展)
   // —— 各类型鉴权字段（宽松，避免每加一种就改类型）——
@@ -39,17 +45,20 @@ export interface AuthAccount {
   cert_thumbprint?: string;     // 可选：x5t 显式覆盖（base64url 形式）。不填则从 cert_pem 自动算。
   cert_pem?: string;            // 公钥证书 PEM（X.509，BEGIN CERTIFICATE），上传到 Azure 应用的那张；用于自动算 x5t
   cert_key?: string;            // 组织租户证书私钥 PEM
-  user_id?: string;           // 组织租户下要挂载的用户的 UPN 或 objectId（app-only 无 /me，必须指定）
   endpoint?: string;          // S3
   region?: string;            // S3
   bucket?: string;            // S3
   access_key_id?: string;     // S3
   secret_access_key?: string; // S3
-  mounts: MountPoint[];
+}
+
+/** 挂载配置（MOUNT_<NAME> 的值）：users 数组。 */
+export interface MountConfig {
+  users: UserMount[];
 }
 
 /**
- * dispatch 用的展开挂载项（配置解析阶段由 AuthAccount.mounts 展开得到）。
+ * dispatch 用的展开挂载项（配置解析阶段由 AUTH_XXX + MOUNT_XXX 配对展开得到）。
  * 每个目录 = 一个 Mount，内含其所属账号的全部鉴权字段（addition）。
  */
 export interface Mount {
@@ -60,6 +69,7 @@ export interface Mount {
   cache?: string;     // 覆盖全局缓存
   hide?: boolean;     // 仅界面隐藏
   sort?: string;      // 本盘列表排序
+  user_id?: string;   // 用户标识（OneDrive 组织租户用）
   addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）
 }
 

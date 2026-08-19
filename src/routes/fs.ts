@@ -227,8 +227,8 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     setListing(cacheKey, entries);
   }
   let visible = await filterHidden(path, entries, readText, fresh);
-  visible = visible.filter((e) => !MARKER_FILES.has(e.name));
-  const spec = c.req.query('sort') || mount.sort || c.env.SORT || 'name_asc';
+  visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
+  const spec = c.req.query('sort') || mount.sort || 'name_asc';
   const sorted = sortEntries(visible, spec);
   return c.json(sorted);
 }

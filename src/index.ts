@@ -20,7 +20,6 @@ const app = new Hono<{ Bindings: Env }>();
 app.get('/api/config', (c) => {
   return c.json({
     title: c.env.SITE_TITLE || 'Elist',
-    sort: c.env.SORT || 'name_asc',
   });
 });
 

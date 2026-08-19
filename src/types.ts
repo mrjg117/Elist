@@ -93,7 +93,6 @@ export interface Driver {
 export interface Env {
   SITE_TITLE?: string;     // 公用：站点标题
   CACHE_CONTROL?: string;  // 公用：下载缓存控制
-  SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
   MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
   CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）

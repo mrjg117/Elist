@@ -73,6 +73,49 @@ async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Pro
   xlsxConfig.markLoaded();
 }
 
+/** 获取配置文件存放的挂载点（根据 CONFIG_MOUNT 环境变量） */
+async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: any; rest: string } | null> {
+  const configMount = c.env.CONFIG_MOUNT;
+  const mounts = getMounts(c.env);
+
+  if (!configMount) {
+    // 未配置，使用第一个挂载点
+    if (mounts.length === 0) return null;
+    const { driver, rest } = await dispatch(c.env, mounts[0].mount);
+    return { driver, rest };
+  }
+
+  if (configMount === ':first-onedrive') {
+    // 查找第一个 OneDrive 挂载点
+    for (const mount of mounts) {
+      if (mount.driver === 'onedrive') {
+        const { driver, rest } = await dispatch(c.env, mount.mount);
+        return { driver, rest };
+      }
+    }
+    return null;
+  }
+
+  if (configMount === ':first-s3') {
+    // 查找第一个 S3 挂载点
+    for (const mount of mounts) {
+      if (mount.driver === 's3') {
+        const { driver, rest } = await dispatch(c.env, mount.mount);
+        return { driver, rest };
+      }
+    }
+    return null;
+  }
+
+  // 具体路径（如 /od1）
+  try {
+    const { driver, rest } = await dispatch(c.env, configMount);
+    return { driver, rest };
+  } catch (e) {
+    return null;
+  }
+}
+
 type SortKey = 'name' | 'time' | 'size' | 'type';
 function parseSort(spec?: string): { key: SortKey; desc: boolean } {
   if (!spec) return { key: 'name', desc: false };
@@ -210,9 +253,26 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
   }
 
   const body = await c.req.json();
-  const mountPath = body.mount || '/'; // 默认保存到第一个挂载点
+  const mountPath = body.mount; // 前端可以指定挂载点
 
-  const { driver, rest } = await dispatch(c.env, mountPath);
+  let configMount;
+  if (mountPath) {
+    // 前端指定了挂载点
+    try {
+      const { driver, rest } = await dispatch(c.env, mountPath);
+      configMount = { driver, rest };
+    } catch (e) {
+      return c.json({ error: 'Invalid mount path' }, 400);
+    }
+  } else {
+    // 使用 CONFIG_MOUNT 环境变量或默认第一个挂载点
+    configMount = await getConfigMount(c);
+    if (!configMount) {
+      return c.json({ error: 'No mount point available for config storage' }, 500);
+    }
+  }
+
+  const { driver, rest } = configMount;
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
 
   const content = xlsxConfig.generateXlsx();
@@ -229,11 +289,13 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
 export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
   // 如果有未保存的修改，先保存
   if (xlsxConfig.isDirty()) {
-    const mountPath = '/'; // 默认保存到第一个挂载点
-    const { driver, rest } = await dispatch(c.env, mountPath);
-    const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-    const content = xlsxConfig.generateXlsx();
-    await driver.writeBinary(xlsxPath, content);
+    const configMount = await getConfigMount(c);
+    if (configMount) {
+      const { driver, rest } = configMount;
+      const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+      const content = xlsxConfig.generateXlsx();
+      await driver.writeBinary(xlsxPath, content);
+    }
   }
 
   // 清空内存

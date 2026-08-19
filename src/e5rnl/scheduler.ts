@@ -1,8 +1,9 @@
 /**
  * E5 续期调度器。
  *
- * 简化自 e5rnl/worker.js，去掉 Queue 分批，直接执行。
- * 支持多账号（每个 OneDrive 账号都跑一轮），保证每账号至少有个 list 操作（刷缓存）。
+ * 简化自 e5rnl/worker.js，单次函数调用内按账号分配预算。
+ * 续期账号：尽量跑满分配的预算。
+ * 非续期账号：只跑 list 刷缓存。
  */
 
 import { ALL_ACTIONS, type ActionDef } from './actions';
@@ -16,6 +17,7 @@ export interface RenewalConfig {
   cert_pem?: string;
   cert_key?: string;
   app_secret?: string;
+  e5rnl?: boolean; // 是否需要续期
 }
 
 export interface RenewalOptions {
@@ -36,16 +38,15 @@ export interface RenewalResult {
 }
 
 /**
- * 执行一轮续期。
- * 随机抽取 API 动作，可重复抽取，直到达到预算或时间上限。
- * 保证每账号至少执行一个 list 操作（刷缓存）。
+ * 为单个账号执行续期或刷缓存。
+ * @param budget 该账号的 API 调用预算
  */
-export async function runRenewal(
+export async function runRenewalForAccount(
   config: RenewalConfig,
   getToken: () => Promise<string>,
+  budget: number,
   options: RenewalOptions = {}
 ): Promise<RenewalResult[]> {
-  const maxApiCalls = options.maxApiCalls ?? 48;
   const maxRuntimeMs = options.maxRuntimeMs ?? 25000;
   const concurrency = options.concurrency ?? 6;
   const delayMin = options.actionDelayMinMs ?? 0;
@@ -57,7 +58,7 @@ export async function runRenewal(
 
   // 构建 Graph API 调用函数
   const graphCall = async (method: string, path: string, body?: any, absolute?: boolean) => {
-    if (apiCalls >= maxApiCalls) {
+    if (apiCalls >= budget) {
       const err = new Error('API call limit reached');
       (err as any).code = 'BUDGET';
       throw err;
@@ -129,9 +130,18 @@ export async function runRenewal(
   const listResult = await executeAction(listAction);
   results.push(listResult);
 
-  // 批量执行剩余动作
-  while (apiCalls < maxApiCalls && Date.now() - startTime < maxRuntimeMs) {
-    const batch = pickActions(concurrency);
+  // 如果不需要续期，只跑 list 就结束
+  if (!config.e5rnl) {
+    return results;
+  }
+
+  // 续期账号：尽量跑满预算
+  while (apiCalls < budget && Date.now() - startTime < maxRuntimeMs) {
+    const remaining = budget - apiCalls;
+    const batchSize = Math.min(concurrency, remaining);
+    if (batchSize <= 0) break;
+
+    const batch = pickActions(batchSize);
     const batchResults = await Promise.all(batch.map(executeAction));
     results.push(...batchResults);
 
@@ -147,22 +157,46 @@ export async function runRenewal(
 
 /**
  * 为多个 OneDrive 账号执行续期。
- * 每个账号独立执行一轮，保证每个账号至少有个 list 操作。
+ * 按续期需求分配预算：
+ * - 续期账号：平均分配剩余预算
+ * - 非续期账号：只分配 1-2 次调用（刷缓存）
  */
 export async function runRenewalForAccounts(
   accounts: RenewalConfig[],
   getToken: (config: RenewalConfig) => Promise<string>,
   options: RenewalOptions = {}
 ): Promise<Map<string, RenewalResult[]>> {
+  const totalBudget = options.maxApiCalls ?? 48;
   const resultsMap = new Map<string, RenewalResult[]>();
 
+  // 统计续期账号数
+  const renewalAccounts = accounts.filter(a => a.e5rnl);
+  const cacheOnlyAccounts = accounts.filter(a => !a.e5rnl);
+
+  // 分配预算
+  const cacheBudgetPerAccount = 2; // 非续期账号分配 2 次调用（list + 1）
+  const totalCacheBudget = cacheOnlyAccounts.length * cacheBudgetPerAccount;
+  const renewalBudget = totalBudget - totalCacheBudget;
+  const budgetPerRenewalAccount = renewalAccounts.length > 0 
+    ? Math.floor(renewalBudget / renewalAccounts.length)
+    : 0;
+
+  console.log(`[E5RNL] 总预算 ${totalBudget}，续期账号 ${renewalAccounts.length} 个（每个 ${budgetPerRenewalAccount}），非续期账号 ${cacheOnlyAccounts.length} 个（每个 ${cacheBudgetPerAccount}）`);
+
+  // 执行每个账号
   for (const account of accounts) {
     const key = `${account.tenant_id}:${account.user_id}`;
+    const budget = account.e5rnl ? budgetPerRenewalAccount : cacheBudgetPerAccount;
+    
     try {
-      const results = await runRenewal(account, () => getToken(account), options);
+      const results = await runRenewalForAccount(account, () => getToken(account), budget, options);
       resultsMap.set(key, results);
+      
+      const ok = results.filter(r => r.ok && !r.skipped).length;
+      const total = results.filter(r => !r.skipped).length;
+      console.log(`[E5RNL] 账号 ${key} ${account.e5rnl ? '续期' : '刷缓存'}完成：${ok}/${total} 成功，预算 ${budget}`);
     } catch (err: any) {
-      console.error(`[E5RNL] Account ${key} failed:`, err);
+      console.error(`[E5RNL] 账号 ${key} 失败：`, err);
       resultsMap.set(key, [{
         action: 'renewal',
         ok: false,

@@ -29,6 +29,10 @@
     #modal.show { display:flex; }
     #modal .box { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:92vw; max-height:92vh; overflow:auto; }
     #modal .box img, #modal .box video, #modal .box iframe { max-width:88vw; max-height:82vh; display:block; border:0; }
+    #modal .box .code-preview { max-width:88vw; max-height:82vh; overflow:auto; background:#f5f5f5; padding:16px; border-radius:6px; font-family:'Courier New',monospace; font-size:13px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
+    @media (prefers-color-scheme: dark) {
+      #modal .box .code-preview { background:#1e1e1e; color:#d4d4d4; }
+    }
     .close { float:right; cursor:pointer; color:var(--muted); }
     input.pw { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); }
     /* 密码弹窗 */

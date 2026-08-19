@@ -63,6 +63,7 @@ export function getMounts(env: Env): Mount[] {
           cache: mp.cache,
           hide: !!mp.hide,
           sort: mp.sort,
+          e5rnl: !!mp.e5rnl,
           user_id: user.user_id,
           addition,
         });

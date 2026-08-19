@@ -7,34 +7,40 @@
 
 import type { Env, Mount } from '../types';
 import { getMounts } from '../config';
-import { runRenewal, type RenewalConfig, type RenewalResult } from './scheduler';
+import { runRenewalForAccounts, type RenewalConfig } from './scheduler';
 
 /**
  * 从 Elist 的 Mount 配置提取 OneDrive 账号信息。
  * 去重（同一 tenant_id + user_id 只保留一个）。
+ * e5rnl 开关：只要该账号下任一挂载点设置了 e5rnl: true，就启用续期。
  */
 function extractOneDriveAccounts(mounts: Mount[]): RenewalConfig[] {
-  const seen = new Set<string>();
-  const accounts: RenewalConfig[] = [];
+  const accountMap = new Map<string, RenewalConfig>();
 
   for (const mount of mounts) {
     if (mount.driver !== 'onedrive') continue;
 
     const key = `${mount.addition.tenant_id}:${mount.user_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    accounts.push({
-      tenant_id: mount.addition.tenant_id,
-      client_id: mount.addition.client_id,
-      user_id: mount.user_id || '',
-      cert_pem: mount.addition.cert_pem,
-      cert_key: mount.addition.cert_key,
-      app_secret: mount.addition.app_secret,
-    });
+    
+    if (accountMap.has(key)) {
+      // 已存在，更新 e5rnl 开关（任一挂载点开启即开启）
+      const existing = accountMap.get(key)!;
+      if (mount.e5rnl) existing.e5rnl = true;
+    } else {
+      // 新账号
+      accountMap.set(key, {
+        tenant_id: mount.addition.tenant_id,
+        client_id: mount.addition.client_id,
+        user_id: mount.user_id || '',
+        cert_pem: mount.addition.cert_pem,
+        cert_key: mount.addition.cert_key,
+        app_secret: mount.addition.app_secret,
+        e5rnl: mount.e5rnl || false,
+      });
+    }
   }
 
-  return accounts;
+  return Array.from(accountMap.values());
 }
 
 /**
@@ -69,34 +75,24 @@ export async function handleScheduled(env: Env): Promise<void> {
     actionDelayMaxMs: Number(env.E5RNL_ACTION_DELAY_MAX_MS ?? 300),
   };
 
-  // 为每个账号执行续期
-  for (const account of accounts) {
-    const key = `${account.tenant_id}:${account.user_id}`;
-    console.log(`[E5RNL] 开始账号 ${key}`);
+  // 为所有账号执行续期（统一调度）
+  const getToken = async (account: RenewalConfig) => {
+    return await getOneDriveToken(account);
+  };
 
-    try {
-      // 获取 token 的函数（复用 OneDriveDriver 的逻辑）
-      const getToken = async () => {
-        // 这里需要调用 OneDriveDriver 的 getToken 方法
-        // 但 OneDriveDriver 是实例方法，我们需要创建一个临时实例
-        // 简化方案：直接在这里实现 token 获取逻辑（和 OneDriveDriver 重复，但可接受）
-        return await getOneDriveToken(account);
-      };
+  const resultsMap = await runRenewalForAccounts(accounts, getToken, options);
 
-      const results = await runRenewal(account, getToken, options);
-      
-      const ok = results.filter(r => r.ok && !r.skipped).length;
-      const total = results.filter(r => !r.skipped).length;
-      const skipped = results.filter(r => r.skipped).length;
-      
-      console.log(`[E5RNL] 账号 ${key} 完成：${ok}/${total} 成功，${skipped} 跳过`);
-      
-      if (ok < total) {
-        const failed = results.filter(r => !r.ok && !r.skipped);
-        console.warn(`[E5RNL] 账号 ${key} 有 ${failed.length} 个失败：`, failed.map(r => r.error));
-      }
-    } catch (err: any) {
-      console.error(`[E5RNL] 账号 ${key} 失败：`, err);
+  // 输出汇总
+  for (const [key, results] of resultsMap.entries()) {
+    const ok = results.filter((r: any) => r.ok && !r.skipped).length;
+    const total = results.filter((r: any) => !r.skipped).length;
+    const skipped = results.filter((r: any) => r.skipped).length;
+    
+    console.log(`[E5RNL] 账号 ${key} 完成：${ok}/${total} 成功，${skipped} 跳过`);
+    
+    if (ok < total) {
+      const failed = results.filter((r: any) => !r.ok && !r.skipped);
+      console.warn(`[E5RNL] 账号 ${key} 有 ${failed.length} 个失败：`, failed.map((r: any) => r.error));
     }
   }
 

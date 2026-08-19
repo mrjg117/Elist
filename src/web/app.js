@@ -197,6 +197,21 @@ async function preview(path, name) {
     inner = `<audio src="${url}" controls autoplay></audio>`;
   } else if (/\.pdf$/.test(lower)) {
     inner = `<iframe src="${url}"></iframe>`;
+  } else if (/\.(docx?|xlsx?|pptx?|doc|xls|ppt)$/.test(lower)) {
+    // Office 文件：使用微软 Office Online Viewer
+    const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+    inner = `<iframe src="${officeUrl}"></iframe>`;
+  } else if (/\.(txt|md|json|js|ts|py|java|c|cpp|h|hpp|css|html|xml|yaml|yml|ini|cfg|sh|bash|zsh|sql|go|rs|rb|php|pl|swift|kt|scala|r|lua|vim|dockerfile|makefile)$/.test(lower)) {
+    // 代码/文本文件：直接读取内容
+    try {
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const escaped = esc(text);
+      inner = `<pre class="code-preview"><code>${escaped}</code></pre>`;
+    } catch (e) {
+      alert('读取文件失败：' + e.message);
+      return;
+    }
   } else {
     // 其他类型：直接用直链触发下载（浏览器跟随 302 直链，无密码暴露）
     window.location.href = url;

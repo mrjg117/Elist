@@ -8,6 +8,7 @@ import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSave
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
 import { handleScheduled } from './e5rnl';
+import fileManagementApp from './routes/file-management';
 
 // 注册驱动：网盘与 S3 只是表里的两项，无任何特判。
 // onedrive = 组织租户证书 app-only（全球版）；s3 = S3 兼容（R2/OSS/COS/MinIO 靠 endpoint 区分）。
@@ -20,7 +21,6 @@ const app = new Hono<{ Bindings: Env }>();
 app.get('/api/config', (c) => {
   return c.json({
     title: c.env.SITE_TITLE || 'Elist',
-    sort: c.env.SORT || 'name_asc',
   });
 });
 
@@ -37,6 +37,9 @@ app.post('/api/admin/logout', handleLogout);
 app.get('/api/admin/config', handleGetConfig);
 app.post('/api/admin/config', handleSetConfig);
 app.post('/api/admin/save', handleSaveConfig);
+
+// 文件管理API（需要管理员权限）
+app.route('/api/file', fileManagementApp);
 
 app.all('/dav', webdavHandler);
 app.all('/dav/', webdavHandler);

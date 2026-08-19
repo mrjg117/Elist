@@ -126,7 +126,8 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
   const { driver, rest } = await dispatch(c.env, mount.mount);
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
   
-  const content = xlsxConfig.generateXlsx();
+  const xlsxPassword = c.env.XLSX_PASSWORD;
+  const content = await xlsxConfig.generateXlsx(xlsxPassword);
   await driver.writeBinary(xlsxPath, content);
   
   xlsxConfig.clearDirty();

@@ -163,10 +163,75 @@ export class S3Driver extends BaseDriver implements Driver {
     const headers = await this.signHeaders('PUT', url, {}, bodyHash);
     const r = await fetch(url, {
       method: 'PUT',
-      headers: { ...headers, 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      headers: { ...headers, 'Content-Type': 'application/octet-stream' },
       body: content,
     });
     if (!r.ok) throw new Error(`S3 write failed: ${r.status}`);
+  }
+
+  async writeText(rest: string, content: string): Promise<void> {
+    const key = this.toAccountPath(rest).replace(/^\//, '');
+    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const encoder = new TextEncoder();
+    const body = encoder.encode(content).buffer;
+    const bodyHash = await sha256Hex(body);
+    const headers = await this.signHeaders('PUT', url, {}, bodyHash);
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'text/plain; charset=utf-8' },
+      body,
+    });
+    if (!r.ok) throw new Error(`S3 writeText failed: ${r.status}`);
+  }
+
+  async move(sourceRest: string, targetRest: string): Promise<void> {
+    // S3 没有原生的 move/rename，需要 copy + delete
+    const sourceKey = this.toAccountPath(sourceRest).replace(/^\//, '');
+    const targetKey = this.toAccountPath(targetRest).replace(/^\//, '');
+    
+    // Copy
+    const copyUrl = `${this.endpoint}/${this.bucket}/${targetKey}`;
+    const copyHeaders = await this.signHeaders('PUT', copyUrl, {}, EMPTY_SHA256);
+    copyHeaders['x-amz-copy-source'] = `/${this.bucket}/${sourceKey}`;
+    const copyResp = await fetch(copyUrl, {
+      method: 'PUT',
+      headers: copyHeaders,
+    });
+    if (!copyResp.ok) throw new Error(`S3 copy failed: ${copyResp.status}`);
+    
+    // Delete source
+    const deleteUrl = `${this.endpoint}/${this.bucket}/${sourceKey}`;
+    const deleteHeaders = await this.signHeaders('DELETE', deleteUrl, {}, EMPTY_SHA256);
+    const deleteResp = await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: deleteHeaders,
+    });
+    if (!deleteResp.ok) throw new Error(`S3 delete source failed: ${deleteResp.status}`);
+  }
+
+  async delete(rest: string): Promise<void> {
+    const key = this.toAccountPath(rest).replace(/^\//, '');
+    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const headers = await this.signHeaders('DELETE', url, {}, EMPTY_SHA256);
+    const r = await fetch(url, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!r.ok) throw new Error(`S3 delete failed: ${r.status}`);
+  }
+
+  async mkdir(rest: string): Promise<void> {
+    // S3 没有真正的目录，创建空对象作为目录标记
+    const key = this.toAccountPath(rest).replace(/^\//, '');
+    const dirKey = key.endsWith('/') ? key : key + '/';
+    const url = `${this.endpoint}/${this.bucket}/${dirKey}`;
+    const headers = await this.signHeaders('PUT', url, {}, EMPTY_SHA256);
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/x-directory' },
+      body: new ArrayBuffer(0),
+    });
+    if (!r.ok) throw new Error(`S3 mkdir failed: ${r.status}`);
   }
 
   /** 全量索引（搜索用）：无 delimiter 翻页扫描。 */

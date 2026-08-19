@@ -32,7 +32,7 @@ function esc(s) {
 
 // 客户端已知密码集合：进入受保护层级时弹窗收集，存入 Set。
 // 每个请求把集合内所有密码以重复 X-Folder-Password 头带上，后端逐层校验
-// （父目录 + 子目录各有 .passwd 时，需两层密码都满足 = 子层重新鉴权）。
+// （父目录 + 子目录各有密码配置时，需两层密码都满足 = 子层重新鉴权）。
 function pwHeaders() {
   const h = new Headers();
   for (const pw of state.pwSet) h.append(PW_HEADER, pw);
@@ -113,7 +113,7 @@ async function openPath(path, fresh = false, pushUrl = true) {
   }
   if (res.needPassword) {
     const hint = res.received
-      ? `服务端已收到 ${res.received} 个密码，仍未解锁 ${res.lockedAt || path}；检查该层 .passwd 内容或输入的密码。`
+      ? `服务端已收到 ${res.received} 个密码，仍未解锁 ${res.lockedAt || path}；检查配置或输入的密码。`
       : '';
     const pw = await askPassword(res.lockedAt || path, hint);
     if (pw === null) {
@@ -531,10 +531,18 @@ async function preview(path, name, entry = null) {
       return;
     }
   } 
-  // 代码文件预览（语法高亮）
+  // 代码文件预览（语法高亮 - Prism.js）
   else if (/\.(txt|js|ts|py|java|c|cpp|h|hpp|css|html|ini|cfg|sh|bash|zsh|sql|go|rs|rb|php|pl|swift|kt|scala|r|lua|vim|dockerfile|makefile)$/.test(lower)) {
     try {
-      await loadLib('hljs', 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js');
+      // 加载 Prism 核心（如果未加载）
+      if (!window.Prism) {
+        await loadLib('Prism', 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js');
+        // 加载主题 CSS
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css';
+        document.head.appendChild(link);
+      }
       
       const resp = await fetch(url);
       const text = await resp.text();
@@ -543,17 +551,29 @@ async function preview(path, name, entry = null) {
       const langMap = {
         'js': 'javascript', 'ts': 'typescript', 'py': 'python',
         'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
-        'css': 'css', 'html': 'xml', 'sql': 'sql',
-        'go': 'go', 'rs': 'rust', 'rb': 'ruby',
-        'php': 'php', 'sh': 'bash', 'bash': 'bash'
+        'css': 'css', 'html': 'markup', 'xml': 'markup',
+        'ini': 'ini', 'cfg': 'ini', 'sh': 'bash', 'bash': 'bash',
+        'zsh': 'bash', 'sql': 'sql', 'go': 'go', 'rs': 'rust',
+        'rb': 'ruby', 'php': 'php', 'pl': 'perl', 'swift': 'swift',
+        'kt': 'kotlin', 'scala': 'scala', 'r': 'r', 'lua': 'lua',
+        'vim': 'vim', 'dockerfile': 'docker', 'makefile': 'makefile'
       };
       
       const ext = lower.split('.').pop();
       const lang = langMap[ext] || 'plaintext';
       
+      // 按需加载语言组件
+      if (lang !== 'plaintext' && !Prism.languages[lang]) {
+        await loadLib(`prism-${lang}`, `https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-${lang}.min.js`);
+      }
+      
       let highlighted;
       try {
-        highlighted = hljs.highlight(text, { language: lang }).value;
+        if (lang === 'plaintext' || !Prism.languages[lang]) {
+          highlighted = esc(text);
+        } else {
+          highlighted = Prism.highlight(text, Prism.languages[lang], lang);
+        }
       } catch (e) {
         highlighted = esc(text);
       }
@@ -562,7 +582,7 @@ async function preview(path, name, entry = null) {
         <div class="preview-controls">
           <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
         </div>
-        <pre style="max-height:70vh;overflow:auto"><code class="hljs">${highlighted}</code></pre>
+        <pre style="max-height:70vh;overflow:auto"><code class="language-${lang}">${highlighted}</code></pre>
       `;
     } catch (e) {
       // 降级：无高亮
@@ -842,7 +862,7 @@ document.getElementById('sort').addEventListener('change', (e) => {
   openPath(state.path, false, false);
 });
 
-// 刷新按钮：强制回源当前目录（绕过缓存，立即反映 .passwd / 文件的改动）
+// 刷新按钮：强制回源当前目录（绕过缓存，立即反映配置 / 文件的改动）
 document.getElementById('refresh').addEventListener('click', () => openPath(state.path, true, false));
 
 // 浏览器前进/后退支持

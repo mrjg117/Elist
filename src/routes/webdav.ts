@@ -30,7 +30,7 @@ function collectPws(c: Context<{ Bindings: Env }>): string[] {
   });
   // WebDAV 客户端（rclone / RaiDrive / Windows 资源管理器等）不会发 X-Folder-Password，
   // 只会发 HTTP Basic Auth。把 Basic 的「用户名 + 密码」都作为候选密码：
-  //   - 只设密码位：可解锁所有 .passwd 含该密码的层级；
+  //   - 只设密码位：可解锁所有配置了该密码的层级；
   //   - 两层密码不同：用户名=P1、密码=P2，两个候选各满足一层。
   const auth = c.req.header('Authorization') || '';
   if (auth.toLowerCase().startsWith('basic ')) {

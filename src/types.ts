@@ -82,18 +82,27 @@ export interface Driver {
   list(path: string): Promise<Entry[]>;
   /** 取下载直链（302 目标）。 */
   link(path: string): Promise<string>;
-  /** 读取文件文本内容（用于 .passwd/.hidden 标记文件解析）。不存在返回 null。 */
+  /** 读取文件文本内容。不存在返回 null。 */
   readText(path: string): Promise<string | null>;
   /** 读取文件二进制内容（用于 .elist.xlsx 配置）。不存在返回 null。 */
   readBinary(path: string): Promise<ArrayBuffer | null>;
   /** 写入文件二进制内容（用于保存 .elist.xlsx 配置）。 */
   writeBinary(path: string, content: ArrayBuffer): Promise<void>;
+  
+  // 文件管理方法（可选，部分存储可能不支持）
+  /** 写入文本文件（用于编辑文本文件）。 */
+  writeText?(path: string, content: string): Promise<void>;
+  /** 移动/重命名文件或目录（源路径 -> 目标路径）。 */
+  move?(sourcePath: string, targetPath: string): Promise<void>;
+  /** 删除文件或目录。 */
+  delete?(path: string): Promise<void>;
+  /** 创建目录。 */
+  mkdir?(path: string): Promise<void>;
 }
 
 export interface Env {
   SITE_TITLE?: string;     // 公用：站点标题
   CACHE_CONTROL?: string;  // 公用：下载缓存控制
-  SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
   MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
   CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）

@@ -8,7 +8,7 @@ import * as xlsxConfig from './xlsx-config';
  * 设计：
  *   - 启动时或首次访问时读取 .elist.xlsx 到内存
  *   - 所有 ACL 检查走内存 Map（< 1ms）
- *   - 不再逐级读取 .passwd/.hidden 文件
+ *   - 配置通过管理页面或 XLSX 文件维护
  *
  * .elist.xlsx 结构：
  *   Sheet1: passwords（路径密码配置）
@@ -74,4 +74,4 @@ export async function filterHidden<T extends { name: string; path: string }>(
 }
 
 /** 标记文件本身不应出现在列表里。 */
-export const MARKER_FILES = new Set(['.passwd', '.hidden', '.elist.xlsx']);
+export const MARKER_FILES = new Set(['.elist.xlsx']);

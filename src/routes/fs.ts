@@ -94,7 +94,8 @@ async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Pro
       const xlsxPath = '/.elist.xlsx';
       const content = await driver.readBinary(xlsxPath);
       if (content) {
-        xlsxConfig.parseXlsx(content);
+        const xlsxPassword = c.env.XLSX_PASSWORD;
+        await xlsxConfig.parseXlsx(content, xlsxPassword);
         return;
       }
     } catch (e) {
@@ -216,7 +217,7 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
+  // 门禁：自身 + 所有祖先目录的密码配置都满足才放行（级联；子层需各自密码=重新鉴权）
   const gate = await checkPathPassword(path, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
@@ -227,8 +228,8 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     setListing(cacheKey, entries);
   }
   let visible = await filterHidden(path, entries, readText, fresh);
-  visible = visible.filter((e) => !MARKER_FILES.has(e.name));
-  const spec = c.req.query('sort') || mount.sort || c.env.SORT || 'name_asc';
+  visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
+  const spec = c.req.query('sort') || mount.sort || 'name_asc';
   const sorted = sortEntries(visible, spec);
   return c.json(sorted);
 }
@@ -307,7 +308,8 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
   const { driver, rest } = configMount;
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
 
-  const content = xlsxConfig.generateXlsx();
+  const xlsxPassword = c.env.XLSX_PASSWORD;
+  const content = await xlsxConfig.generateXlsx(xlsxPassword);
   await driver.writeBinary(xlsxPath, content);
 
   xlsxConfig.clearDirty();
@@ -325,7 +327,8 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
     if (configMount) {
       const { driver, rest } = configMount;
       const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-      const content = xlsxConfig.generateXlsx();
+      const xlsxPassword = c.env.XLSX_PASSWORD;
+      const content = await xlsxConfig.generateXlsx(xlsxPassword);
       await driver.writeBinary(xlsxPath, content);
     }
   }

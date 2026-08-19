@@ -61,8 +61,6 @@ export function getMounts(env: Env): Mount[] {
           driver: auth.type,
           title: mp.title,
           cache: mp.cache,
-          hide: !!mp.hide,
-          sort: mp.sort,
           e5rnl: !!mp.e5rnl,
           user_id: user.user_id,
           addition,
@@ -105,14 +103,15 @@ export function normalize(path: string): string {
 }
 
 /**
- * 根目录（/）展示的盘列表：按 MOUNT_ORDER 排，剔除 hide 的盘。
+ * 根目录（/）展示的盘列表：按 MOUNT_ORDER 排序。
  * 每个盘只出现一次（按 mount 前缀去重，保留首个）。
+ * 隐藏状态从 .elist.xlsx 配置读取，由调用方处理。
  */
-export function getRoots(env: Env): { path: string; title?: string; hide?: boolean }[] {
+export function getRoots(env: Env): { path: string; title?: string }[] {
   const seen = new Set<string>();
   const list = getMounts(env)
     .filter((m) => !seen.has(m.mount) && seen.add(m.mount))
-    .map((m) => ({ path: m.mount, title: m.title, hide: m.hide }));
+    .map((m) => ({ path: m.mount, title: m.title }));
 
   const order = (env.MOUNT_ORDER || '')
     .split(',')
@@ -125,5 +124,5 @@ export function getRoots(env: Env): { path: string; title?: string; hide?: boole
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
   }
-  return list.filter((r) => !r.hide);
+  return list;
 }

@@ -191,15 +191,13 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   // 首次访问或强制刷新时加载 .elist.xlsx 配置
   await loadXlsxConfig(c, fresh);
 
-  // 根目录：展示盘列表（hide 的盘已剔除 + 检查每个挂载根路径的隐藏状态）
+  // 根目录：展示盘列表（从 xlsx 配置读取隐藏状态）
   if (path === '/' || path === '') {
     const roots = getRoots(c.env);
     // 检查每个挂载根路径是否隐藏（从 xlsx 配置读取）
     const visibleRoots = await Promise.all(
       roots.map(async (r) => {
-        const { driver, rest, mount } = await dispatch(c.env, r.path);
-        const readText = (full: string) => driver.readText(toRest(full, mount));
-        const hidden = await isHidden(r.path, readText, fresh);
+        const hidden = await isHidden(r.path, undefined, fresh);
         return { root: r, hidden };
       })
     );

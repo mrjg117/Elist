@@ -1080,6 +1080,14 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   }
 });
 
+// 页面离开时自动保存配置
+window.addEventListener('beforeunload', (e) => {
+  if (adminState.loggedIn) {
+    // 发送同步请求保存配置
+    navigator.sendBeacon('/api/admin/save');
+  }
+});
+
 // 修改列表渲染，添加操作按钮
 const originalRenderListView = renderListView;
 renderListView = function(entries, listEl) {

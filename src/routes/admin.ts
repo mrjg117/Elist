@@ -116,21 +116,78 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
     return c.json({ success: true, message: '没有需要保存的更改' });
   }
   
-  // 找到第一个挂载点来保存配置文件
   const mounts = getMounts(c.env);
   if (mounts.length === 0) {
     return c.json({ error: '没有可用的挂载点' }, 500);
   }
   
-  const mount = mounts[0];
-  const { driver, rest } = await dispatch(c.env, mount.mount);
-  const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-  
+  const configAuth = c.env.CONFIG_AUTH;
+  const configPath = c.env.CONFIG_PATH || '/';
   const xlsxPassword = c.env.XLSX_PASSWORD;
   const content = await xlsxConfig.generateXlsx(xlsxPassword);
-  await driver.writeBinary(xlsxPath, content);
   
-  xlsxConfig.clearDirty();
+  // 回落逻辑：优先指定位置 -> first-onedrive -> first-s3 -> 第一个存储
+  const saveTargets: string[] = [];
   
-  return c.json({ success: true });
+  if (configAuth) {
+    saveTargets.push(configAuth);
+  }
+  saveTargets.push(':first-onedrive', ':first-s3', ':first');
+  
+  const errors: string[] = [];
+  
+  for (const target of saveTargets) {
+    try {
+      const driver = await getConfigDriver(c.env, target, configPath);
+      if (!driver) {
+        errors.push(`${target}: 未找到匹配的存储`);
+        continue;
+      }
+      const xlsxPath = configPath === '/' ? '/.elist.xlsx' : configPath + '/.elist.xlsx';
+      await driver.writeBinary(xlsxPath, content);
+      xlsxConfig.clearDirty();
+      return c.json({ success: true, savedTo: target });
+    } catch (e: any) {
+      errors.push(`${target}: ${e.message}`);
+      continue;
+    }
+  }
+  
+  return c.json({ error: '所有保存位置都失败', details: errors }, 500);
+}
+
+// 获取配置存储的 driver
+async function getConfigDriver(env: Env, target: string, configPath: string): Promise<any | null> {
+  const { getAllAuthAccounts } = await import('../lib/dispatch');
+  const { getDriverClass } = await import('../drivers/registry');
+  
+  const accounts = getAllAuthAccounts(env);
+  if (accounts.length === 0) return null;
+  
+  let targetAccount: { name: string; type: string; auth: any } | null = null;
+  
+  if (target === ':first-onedrive') {
+    targetAccount = accounts.find(a => a.type === 'onedrive') || null;
+  } else if (target === ':first-s3') {
+    targetAccount = accounts.find(a => a.type === 's3') || null;
+  } else if (target === ':first') {
+    targetAccount = accounts[0];
+  } else {
+    targetAccount = accounts.find(a => a.name === target) || null;
+  }
+  
+  if (!targetAccount) return null;
+  
+  const DriverClass = getDriverClass(targetAccount.type);
+  if (!DriverClass) return null;
+  
+  const driver = new DriverClass();
+  await driver.init({
+    mount: '/',
+    root: configPath,
+    driver: targetAccount.type,
+    addition: targetAccount.auth,
+  }, env);
+  
+  return driver;
 }

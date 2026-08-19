@@ -42,4 +42,6 @@ export abstract class BaseDriver implements Driver {
   abstract list(path: string): Promise<Entry[]>;
   abstract link(path: string): Promise<string>;
   abstract readText(path: string): Promise<string | null>;
+  abstract readBinary(path: string): Promise<ArrayBuffer | null>;
+  abstract writeBinary(path: string, content: ArrayBuffer): Promise<void>;
 }

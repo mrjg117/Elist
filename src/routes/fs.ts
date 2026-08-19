@@ -8,7 +8,8 @@ import {
   MARKER_FILES,
 } from '../lib/acl';
 import { getListing, setListing, searchListings } from '../lib/cache';
-import { getRoots } from '../config';
+import { getRoots, getMounts } from '../config';
+import * as xlsxConfig from '../lib/xlsx-config';
 
 /** 取父目录路径（用于文件下载时校验所在目录密码）。 */
 function parentDir(path: string): string {
@@ -48,6 +49,30 @@ function isFresh(c: Context<{ Bindings: Env }>): boolean {
   return h === '1' || h === 'true';
 }
 
+/** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
+async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
+  if (xlsxConfig.isLoaded() && !fresh) return;
+
+  // 尝试从任意挂载点读取 .elist.xlsx
+  const mounts = getMounts(c.env);
+  for (const mount of mounts) {
+    try {
+      const { driver, rest } = await dispatch(c.env, mount.mount);
+      const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+      const content = await driver.readBinary(xlsxPath);
+      if (content) {
+        xlsxConfig.parseXlsx(content);
+        return;
+      }
+    } catch (e) {
+      // 读取失败，尝试下一个挂载点
+      continue;
+    }
+  }
+  // 没有找到 .elist.xlsx，标记为已加载（空配置）
+  xlsxConfig.markLoaded();
+}
+
 type SortKey = 'name' | 'time' | 'size' | 'type';
 function parseSort(spec?: string): { key: SortKey; desc: boolean } {
   if (!spec) return { key: 'name', desc: false };
@@ -85,11 +110,14 @@ function sortEntries<T extends Entry>(entries: T[], spec?: string): T[] {
 export async function handleList(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path') || '/';
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 首次访问或强制刷新时加载 .elist.xlsx 配置
+  await loadXlsxConfig(c, fresh);
 
   // 根目录：展示盘列表（hide 的盘已剔除 + 检查每个挂载根路径的 .hidden）
   if (path === '/' || path === '') {
     const roots = getRoots(c.env);
-    const fresh = isFresh(c);
     // 检查每个挂载根路径是否有 .hidden 文件（存在即隐藏）
     const visibleRoots = await Promise.all(
       roots.map(async (r) => {
@@ -114,7 +142,6 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   // 门禁：自身 + 所有祖先目录的 .passwd 都满足才放行（级联；子层需各自密码=重新鉴权）
-  const fresh = isFresh(c);
   const gate = await checkPathPassword(path, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
@@ -171,6 +198,47 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
     status: 302,
     headers: { Location: url, 'Cache-Control': cc },
   });
+}
+
+/**
+ * POST /api/config/save
+ * 保存 xlsx 配置到存储（将内存中的配置写回 .elist.xlsx）
+ */
+export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
+  if (!xlsxConfig.isDirty()) {
+    return c.json({ success: true, message: 'No changes to save' });
+  }
+
+  const body = await c.req.json();
+  const mountPath = body.mount || '/'; // 默认保存到第一个挂载点
+
+  const { driver, rest } = await dispatch(c.env, mountPath);
+  const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+
+  const content = xlsxConfig.generateXlsx();
+  await driver.writeBinary(xlsxPath, content);
+
+  xlsxConfig.clearDirty();
+  return c.json({ success: true });
+}
+
+/**
+ * POST /api/config/clear
+ * 清理缓存（先保存未保存的修改，再清空内存）
+ */
+export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
+  // 如果有未保存的修改，先保存
+  if (xlsxConfig.isDirty()) {
+    const mountPath = '/'; // 默认保存到第一个挂载点
+    const { driver, rest } = await dispatch(c.env, mountPath);
+    const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
+    const content = xlsxConfig.generateXlsx();
+    await driver.writeBinary(xlsxPath, content);
+  }
+
+  // 清空内存
+  xlsxConfig.clearAll();
+  return c.json({ success: true });
 }
 
 /**

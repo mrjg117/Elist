@@ -3,7 +3,8 @@ import type { Env } from './types';
 import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
-import { handleList, handleDownload, handleSearch, handleLink } from './routes/fs';
+import { handleList, handleDownload, handleSearch, handleLink, handleConfigSave, handleConfigClear } from './routes/fs';
+import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
 
@@ -26,6 +27,16 @@ app.get('/api/list', handleList);
 app.get('/api/link', handleLink);
 app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
+app.post('/api/config/save', handleConfigSave);
+app.post('/api/config/clear', handleConfigClear);
+
+// 管理员API
+app.post('/api/admin/login', handleLogin);
+app.post('/api/admin/logout', handleLogout);
+app.get('/api/admin/config', handleGetConfig);
+app.post('/api/admin/config', handleSetConfig);
+app.post('/api/admin/save', handleSaveConfig);
+
 app.all('/dav', webdavHandler);
 app.all('/dav/', webdavHandler);
 app.all('/dav/*', webdavHandler);

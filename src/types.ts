@@ -82,6 +82,10 @@ export interface Driver {
   link(path: string): Promise<string>;
   /** 读取文件文本内容（用于 .passwd/.hidden 标记文件解析）。不存在返回 null。 */
   readText(path: string): Promise<string | null>;
+  /** 读取文件二进制内容（用于 .elist.xlsx 配置）。不存在返回 null。 */
+  readBinary(path: string): Promise<ArrayBuffer | null>;
+  /** 写入文件二进制内容（用于保存 .elist.xlsx 配置）。 */
+  writeBinary(path: string, content: ArrayBuffer): Promise<void>;
 }
 
 export interface Env {

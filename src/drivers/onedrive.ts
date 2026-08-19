@@ -149,6 +149,29 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     return r.text();
   }
 
+  async readBinary(rest: string): Promise<ArrayBuffer | null> {
+    const token = await this.getToken();
+    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (r.status === 404) return null;
+    if (!r.ok) return null;
+    return r.arrayBuffer();
+  }
+
+  async writeBinary(rest: string, content: ArrayBuffer): Promise<void> {
+    const token = await this.getToken();
+    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+      body: content,
+    });
+    if (!r.ok) throw new Error(`OneDrive write failed: ${r.status}`);
+  }
+
   private toEntry(parentAccountPath: string, it: any): Entry {
     const isDir = !!it.folder;
     const name = it.name;

@@ -26,7 +26,6 @@ export interface MountPoint {
   root: string;       // 账号内相对路径，如 /Photos；'/' 表示账号根
   title?: string;     // 展示名（可选）
   cache?: string;     // 覆盖全局 CACHE_CONTROL（可选）
-  hide?: boolean;     // 仅界面隐藏（根目录列表不显示），硬路径仍可访问
   e5rnl?: boolean;    // 是否参与 E5 续期（默认 false）
 }
 
@@ -67,7 +66,6 @@ export interface Mount {
   driver: string;     // = account.type（驱动注册名）
   title?: string;
   cache?: string;     // 覆盖全局缓存
-  hide?: boolean;     // 仅界面隐藏
   e5rnl?: boolean;    // 是否参与 E5 续期
   user_id?: string;   // 用户标识（OneDrive 组织租户用）
   addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）

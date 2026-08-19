@@ -93,6 +93,13 @@ export interface Env {
   CACHE_CONTROL?: string;  // 公用：下载缓存控制
   SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
   MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
-  S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒），默认 3600
+  S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
+  // E5 续期配置
+  E5RNL_RUN_PROBABILITY?: string;    // 每次 cron 触发执行续期的概率（0-1）
+  E5RNL_MAX_API_CALLS?: string;      // 每轮最多 API 调用次数
+  E5RNL_MAX_RUNTIME_MS?: string;     // 每轮最大运行时间（毫秒）
+  E5RNL_CONCURRENCY?: string;        // 并发批次大小
+  E5RNL_ACTION_DELAY_MIN_MS?: string; // 动作间最小延迟（毫秒）
+  E5RNL_ACTION_DELAY_MAX_MS?: string; // 动作间最大延迟（毫秒）
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

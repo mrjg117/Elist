@@ -96,7 +96,8 @@ export interface Env {
   SORT?: string;           // 公用：默认列表排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
   MOUNT_ORDER?: string;    // 公用：根目录盘顺序，逗号分隔（如 /od,/s3）
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
-  CONFIG_MOUNT?: string;   // 配置文件存放位置：具体路径（如 /od1）或特殊值（:first-onedrive, :first-s3）
+  CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）
+  CONFIG_PATH?: string;    // 配置文件存储路径（存储内相对路径，如 / 或 /config）
   // E5 续期配置
   E5RNL_RUN_PROBABILITY?: string;    // 每次 cron 触发执行续期的概率（0-1）
   E5RNL_MAX_API_CALLS?: string;      // 每轮最多 API 调用次数

@@ -73,47 +73,47 @@ async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Pro
   xlsxConfig.markLoaded();
 }
 
-/** 获取配置文件存放的挂载点（根据 CONFIG_MOUNT 环境变量） */
+/** 获取配置文件存放的存储位置（根据 CONFIG_AUTH 和 CONFIG_PATH 环境变量） */
 async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: any; rest: string } | null> {
-  const configMount = c.env.CONFIG_MOUNT;
+  const configAuth = c.env.CONFIG_AUTH;
+  const configPath = c.env.CONFIG_PATH || '/';
+
+  // 如果配置了 CONFIG_AUTH，使用该存储账号
+  if (configAuth) {
+    const authKey = `AUTH_${configAuth}`;
+    const authValue = c.env[authKey];
+    if (!authValue) return null;
+
+    let auth: any;
+    try {
+      auth = JSON.parse(authValue);
+    } catch {
+      return null;
+    }
+
+    // 创建临时 driver 实例
+    const { getDriverClass } = await import('../drivers/registry');
+    const DriverClass = getDriverClass(auth.type);
+    if (!DriverClass) return null;
+
+    const driver = new DriverClass();
+    await driver.init({
+      mount: '/',
+      root: configPath,  // 使用 CONFIG_PATH 作为存储内路径
+      driver: auth.type,
+      addition: auth,
+    }, c.env);
+
+    return { driver, rest: '/' };
+  }
+
+  // 未配置 CONFIG_AUTH，回退到使用第一个挂载点的存储
   const mounts = getMounts(c.env);
-
-  if (!configMount) {
-    // 未配置，使用第一个挂载点
-    if (mounts.length === 0) return null;
-    const { driver, rest } = await dispatch(c.env, mounts[0].mount);
-    return { driver, rest };
-  }
-
-  if (configMount === ':first-onedrive') {
-    // 查找第一个 OneDrive 挂载点
-    for (const mount of mounts) {
-      if (mount.driver === 'onedrive') {
-        const { driver, rest } = await dispatch(c.env, mount.mount);
-        return { driver, rest };
-      }
-    }
-    return null;
-  }
-
-  if (configMount === ':first-s3') {
-    // 查找第一个 S3 挂载点
-    for (const mount of mounts) {
-      if (mount.driver === 's3') {
-        const { driver, rest } = await dispatch(c.env, mount.mount);
-        return { driver, rest };
-      }
-    }
-    return null;
-  }
-
-  // 具体路径（如 /od1）
-  try {
-    const { driver, rest } = await dispatch(c.env, configMount);
-    return { driver, rest };
-  } catch (e) {
-    return null;
-  }
+  if (mounts.length === 0) return null;
+  
+  const firstMount = mounts[0];
+  const { driver, rest } = await dispatch(c.env, firstMount.mount);
+  return { driver, rest };
 }
 
 type SortKey = 'name' | 'time' | 'size' | 'type';

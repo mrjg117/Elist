@@ -13,7 +13,7 @@
   - `onedrive`：组织租户 Azure 证书凭据（RS256 JWT 自签），无 refresh_token、免 2 年失效。
   - `s3`：S3 / R2 / OSS / COS / MinIO，手写 AWS SigV4，不引 aws-sdk。
 - **302 直链下载**：浏览器直接从源站拉文件，边缘不搬字节、天然支持 Range 多线程。
-- **只读 WebDAV**：`/dav` 路径下提供 `OPTIONS / PROPFIND / GET / HEAD`，可对接播放器或只读挂载工具。
+- **WebDAV**：`/dav` 路径下提供完整 WebDAV 支持（读/写），可对接 rclone、RaiDrive 等工具。
 - **配置集中化（.elist.xlsx）**：密码、隐藏目录等配置统一存放在存储根目录的 `.elist.xlsx` 文件中，支持在线编辑、可加密。
 - **管理员登录**：网页端登录后可通过界面配置各目录的密码和显隐，无需手动编辑文件。
 - **文件夹密码门禁**：支持级联鉴权，密码经请求头传递、不进 URL。
@@ -115,7 +115,7 @@ npm run deploy
     {
       "user_id": "user@org.com",
       "mounts": [
-        { "path": "/od1", "root": "/", "title": "我的网盘", "sort": "time_desc" },
+        { "path": "/od1", "root": "/", "title": "我的网盘" },
         { "path": "/od1/photos", "root": "/Photos", "title": "照片", "hide": false, "e5rnl": true }
       ]
     }
@@ -132,7 +132,6 @@ npm run deploy
 | `title` | string | 展示名（可选） |
 | `cache` | string | 覆盖全局 CACHE_CONTROL（可选） |
 | `hide` | boolean | 仅界面隐藏，硬路径仍可访问（可选） |
-| `sort` | string | 本盘列表排序，覆盖全局 SORT（可选） |
 | `e5rnl` | boolean | 是否启用 E5 续期（可选，默认 false） |
 
 ### 公用变量
@@ -141,16 +140,10 @@ npm run deploy
 |------|------|--------|
 | `SITE_TITLE` | 站点标题 | `Elist` |
 | `CACHE_CONTROL` | 下载 302 的 Cache-Control | `public, max-age=300` |
-| `SORT` | 默认列表排序 | `name_asc` |
 | `MOUNT_ORDER` | 根目录盘顺序，逗号分隔（如 `/od1,/s3`） | 配置顺序 |
 | `S3_LINK_TTL` | S3 下载直链有效期（秒） | `3600` |
 | `ADMIN_PASSWORD` | 管理员登录密码 | 无（必填才能使用管理功能） |
-
-### 排序取值
-
-`name_asc` | `name_desc` | `time_asc` | `time_desc` | `size_asc` | `size_desc` | `type_asc` | `type_desc`
-
-优先级：`?sort=` 查询 > 挂载 `sort` > `SORT` > `name_asc`。文件夹永远排前。
+| `XLSX_PASSWORD` | 配置文件加密密码 | 无（可选） |
 
 ---
 
@@ -174,7 +167,7 @@ npm run deploy
 
 **加载逻辑：** 首次访问时遍历所有存储账号，在 `CONFIG_PATH` 路径下查找 `.elist.xlsx`，找到第一个即加载。
 
-**保存逻辑：** 根据 `CONFIG_AUTH` 写入指定位置。
+**保存逻辑：** 优先写入 `CONFIG_AUTH` 指定位置，若失败则按顺序尝试：`:first-onedrive` → `:first-s3` → 第一个存储账号。
 
 ### xlsx 结构
 
@@ -194,7 +187,7 @@ npm run deploy
 
 - 配置各目录的密码和提示
 - 设置目录隐藏状态
-- 保存配置到 `.elist.xlsx`
+- 保存配置到 `.elist.xlsx`（离开页面时自动保存）
 
 ### 图片 EXIF
 
@@ -263,7 +256,14 @@ npm run deploy
 
 ## WebDAV
 
-只读 WebDAV 挂在 `/dav` 下（`OPTIONS / PROPFIND / GET / HEAD`），可对接支持 WebDAV 的播放器或只读挂载。写操作返回 `405`。
+WebDAV 挂在 `/dav` 下，支持完整的读写操作：
+
+- **读操作**：`OPTIONS / PROPFIND / GET / HEAD`（无需认证）
+- **写操作**：`PUT / MKCOL / DELETE / MOVE`（需管理员密码）
+
+**认证方式：**
+- `X-Admin-Password` 请求头
+- HTTP Basic Auth（用户名 `admin`，密码为 `ADMIN_PASSWORD`）
 
 门禁与网页端一致：受密码保护的路径同样要求密码，密码经 `X-Folder-Password` 请求头传递。
 

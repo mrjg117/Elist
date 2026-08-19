@@ -70,8 +70,13 @@ function askPassword(hintPath, hint) {
   });
 }
 
-async function openPath(path, fresh = false) {
+async function openPath(path, fresh = false, pushUrl = true) {
   state.path = path;
+  // 更新 URL（不刷新页面）
+  if (pushUrl) {
+    const url = path === '/' ? '/' : path;
+    history.pushState({ path }, '', url);
+  }
   renderCrumbs();
   const listEl = document.getElementById('list');
   listEl.innerHTML = '<div class="empty">加载中…</div>';
@@ -180,11 +185,17 @@ function renderCrumbs() {
 // 排序切换
 document.getElementById('sort').addEventListener('change', (e) => {
   state.sort = e.target.value;
-  openPath(state.path);
+  openPath(state.path, false, false);
 });
 
 // 刷新按钮：强制回源当前目录（绕过缓存，立即反映 .passwd / 文件的改动）
-document.getElementById('refresh').addEventListener('click', () => openPath(state.path, true));
+document.getElementById('refresh').addEventListener('click', () => openPath(state.path, true, false));
+
+// 浏览器前进/后退支持
+window.addEventListener('popstate', (e) => {
+  const path = e.state?.path || location.pathname || '/';
+  openPath(path, false, false);
+});
 
 // 搜索（现搜 + 后端内存索引）；密码走头
 document.getElementById('search').addEventListener('input', async (e) => {

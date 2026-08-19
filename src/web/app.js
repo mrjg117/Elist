@@ -9,6 +9,23 @@ const state = {
 };
 const PW_HEADER = 'X-Folder-Password';
 
+// 预览库按需加载缓存
+const previewLibs = {};
+
+// 动态加载库（CDN）
+async function loadLib(name, url) {
+  if (previewLibs[name]) return previewLibs[name];
+  const script = document.createElement('script');
+  script.src = url;
+  document.head.appendChild(script);
+  await new Promise((resolve, reject) => {
+    script.onload = resolve;
+    script.onerror = reject;
+  });
+  previewLibs[name] = window[name];
+  return previewLibs[name];
+}
+
 function esc(s) {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
@@ -132,11 +149,11 @@ function renderListView(entries, listEl) {
       </div>`
     )
     .join('');
-  listEl.querySelectorAll('.row').forEach((row) => {
+  listEl.querySelectorAll('.row').forEach((row, idx) => {
     row.onclick = () => {
       const p = row.dataset.path;
       if (row.dataset.dir === 'true') openPath(p);
-      else preview(p, row.querySelector('.name').textContent);
+      else preview(p, row.querySelector('.name').textContent, entries[idx]);
     };
   });
 }
@@ -172,7 +189,160 @@ function fmtSize(n) {
   return n.toFixed(1) + ' ' + u[i];
 }
 
-async function preview(path, name) {
+// 图片预览增强：EXIF + 缩放旋转
+async function previewImage(url, name) {
+  let controls = `
+    <div class="preview-controls">
+      <button onclick="zoomImage(0.1)">放大</button>
+      <button onclick="zoomImage(-0.1)">缩小</button>
+      <button onclick="rotateImage(90)">旋转</button>
+      <button onclick="resetImage()">重置</button>
+      <button onclick="toggleFullscreen()">全屏</button>
+      <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+      <button onclick="showQRCode('${esc(url)}')">二维码</button>
+    </div>
+  `;
+  
+  let exifPanel = '';
+  if (adminState.loggedIn) {
+    try {
+      await loadLib('ExifReader', 'https://cdn.jsdelivr.net/npm/exifreader@5.0.0/dist/exif-reader.min.js');
+      const resp = await fetch(url);
+      const buffer = await resp.arrayBuffer();
+      const tags = ExifReader.read(buffer);
+      
+      const exifData = [];
+      if (tags.Make) exifData.push(`相机: ${tags.Make.description}`);
+      if (tags.Model) exifData.push(`型号: ${tags.Model.description}`);
+      if (tags.DateTime) exifData.push(`时间: ${tags.DateTime.description}`);
+      if (tags.FocalLength) exifData.push(`焦距: ${tags.FocalLength.description}`);
+      if (tags.ApertureValue) exifData.push(`光圈: ${tags.ApertureValue.description}`);
+      if (tags.ISOSpeedRatings) exifData.push(`ISO: ${tags.ISOSpeedRatings.description}`);
+      if (tags.ExposureTime) exifData.push(`快门: ${tags.ExposureTime.description}`);
+      if (tags.GPSLatitude && tags.GPSLongitude) {
+        exifData.push(`GPS: ${tags.GPSLatitude.description}, ${tags.GPSLongitude.description}`);
+      }
+      
+      if (exifData.length > 0) {
+        exifPanel = `<div class="exif-panel"><strong>EXIF 信息</strong><br>${exifData.join('<br>')}</div>`;
+      }
+    } catch (e) {
+      console.log('EXIF 读取失败:', e);
+    }
+  }
+  
+  return `
+    ${controls}
+    <div class="image-container">
+      <img id="previewImg" src="${url}" style="max-width:100%;max-height:80vh;transition:transform 0.3s" />
+    </div>
+    ${exifPanel}
+  `;
+}
+
+// 图片操作函数
+let imageZoom = 1;
+let imageRotate = 0;
+
+function zoomImage(delta) {
+  imageZoom = Math.max(0.1, Math.min(5, imageZoom + delta));
+  updateImageTransform();
+}
+
+function rotateImage(deg) {
+  imageRotate = (imageRotate + deg) % 360;
+  updateImageTransform();
+}
+
+function resetImage() {
+  imageZoom = 1;
+  imageRotate = 0;
+  updateImageTransform();
+}
+
+function updateImageTransform() {
+  const img = document.getElementById('previewImg');
+  if (img) {
+    img.style.transform = `scale(${imageZoom}) rotate(${imageRotate}deg)`;
+  }
+}
+
+// 全屏预览
+function toggleFullscreen() {
+  const modal = document.getElementById('modal');
+  if (!document.fullscreenElement) {
+    modal.requestFullscreen().catch(err => {
+      console.log('全屏失败:', err);
+    });
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+// 复制分享链接
+async function copyShareLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('链接已复制');
+  } catch (e) {
+    // 降级方案
+    const input = document.createElement('input');
+    input.value = url;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    document.body.removeChild(input);
+    alert('链接已复制');
+  }
+}
+
+// 显示二维码
+async function showQRCode(url) {
+  try {
+    await loadLib('QRCode', 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js');
+    const canvas = document.createElement('canvas');
+    await QRCode.toCanvas(canvas, url);
+    
+    const modal = document.createElement('div');
+    modal.className = 'pwmodal show';
+    modal.innerHTML = `
+      <div class="pwbox">
+        <div class="pwtitle">扫描二维码</div>
+        <div style="text-align:center"></div>
+        <div class="pwrow">
+          <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
+        </div>
+      </div>
+    `;
+    modal.querySelector('div > div').appendChild(canvas);
+    document.body.appendChild(modal);
+  } catch (e) {
+    alert('二维码生成失败: ' + e.message);
+  }
+}
+
+// 文件信息面板
+function showFileInfo(path, name, size, mime) {
+  const modal = document.createElement('div');
+  modal.className = 'pwmodal show';
+  modal.innerHTML = `
+    <div class="pwbox">
+      <div class="pwtitle">文件信息</div>
+      <div style="font-size:14px;line-height:1.8">
+        <div><strong>文件名:</strong> ${esc(name)}</div>
+        <div><strong>路径:</strong> ${esc(path)}</div>
+        <div><strong>大小:</strong> ${fmtSize(size)}</div>
+        <div><strong>类型:</strong> ${esc(mime || '未知')}</div>
+      </div>
+      <div class="pwrow">
+        <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+async function preview(path, name, entry = null) {
   const lower = name.toLowerCase();
   let url;
   try {
@@ -183,42 +353,399 @@ async function preview(path, name) {
       const pw = await askPassword(e.lockedAt || state.path);
       if (pw === null) return;
       state.pwSet.add(pw);
-      return preview(path, name);
+      return preview(path, name, entry);
     }
     alert('预览失败：' + (e.message || e));
     return;
   }
+  
   let inner = '';
+  
+  // 图片预览（增强版）
   if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(lower)) {
-    inner = `<img src="${url}" />`;
-  } else if (/\.(mp4|webm|mov|mkv|m4v)$/.test(lower)) {
-    inner = `<video src="${url}" controls autoplay></video>`;
-  } else if (/\.(mp3|wav|ogg|m4a)$/.test(lower)) {
-    inner = `<audio src="${url}" controls autoplay></audio>`;
-  } else if (/\.pdf$/.test(lower)) {
-    inner = `<iframe src="${url}"></iframe>`;
-  } else if (/\.(docx?|xlsx?|pptx?|doc|xls|ppt)$/.test(lower)) {
-    // Office 文件：使用微软 Office Online Viewer
+    inner = await previewImage(url, name);
+  } 
+  // 视频预览
+  else if (/\.(mp4|webm|mov|mkv|m4v)$/.test(lower)) {
+    inner = `
+      <div class="preview-controls">
+        <button onclick="toggleFullscreen()">全屏</button>
+        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+      </div>
+      <video src="${url}" controls autoplay style="max-width:100%;max-height:80vh"></video>
+    `;
+  } 
+  // 音频预览
+  else if (/\.(mp3|wav|ogg|m4a)$/.test(lower)) {
+    inner = `
+      <div class="preview-controls">
+        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+      </div>
+      <audio src="${url}" controls autoplay style="width:100%"></audio>
+    `;
+  } 
+  // PDF 预览
+  else if (/\.pdf$/.test(lower)) {
+    inner = `
+      <div class="preview-controls">
+        <button onclick="toggleFullscreen()">全屏</button>
+        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+      </div>
+      <iframe src="${url}" style="width:100%;height:80vh;border:none"></iframe>
+    `;
+  } 
+  // Office 文件预览
+  else if (/\.(docx?|xlsx?|pptx?|doc|xls|ppt)$/.test(lower)) {
     const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
-    inner = `<iframe src="${officeUrl}"></iframe>`;
-  } else if (/\.(txt|md|json|js|ts|py|java|c|cpp|h|hpp|css|html|xml|yaml|yml|ini|cfg|sh|bash|zsh|sql|go|rs|rb|php|pl|swift|kt|scala|r|lua|vim|dockerfile|makefile)$/.test(lower)) {
-    // 代码/文本文件：直接读取内容
+    inner = `<iframe src="${officeUrl}" style="width:100%;height:80vh;border:none"></iframe>`;
+  } 
+  // Markdown 预览
+  else if (/\.md$/.test(lower)) {
+    try {
+      await loadLib('marked', 'https://cdn.jsdelivr.net/npm/marked@11.1.0/marked.min.js');
+      await loadLib('DOMPurify', 'https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js');
+      
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const html = DOMPurify.sanitize(marked.parse(text));
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="toggleRaw()">原始文本</button>
+        </div>
+        <div id="mdRendered" class="markdown-body">${html}</div>
+        <pre id="mdRaw" style="display:none">${esc(text)}</pre>
+      `;
+    } catch (e) {
+      alert('Markdown 渲染失败: ' + e.message);
+      return;
+    }
+  } 
+  // JSON 预览（虚拟滚动）
+  else if (/\.json$/.test(lower)) {
     try {
       const resp = await fetch(url);
       const text = await resp.text();
-      const escaped = esc(text);
-      inner = `<pre class="code-preview"><code>${escaped}</code></pre>`;
+      const data = JSON.parse(text);
+      const formatted = JSON.stringify(data, null, 2);
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="toggleJSON()">折叠/展开</button>
+        </div>
+        <div class="json-viewer" style="max-height:70vh;overflow:auto">
+          <pre>${esc(formatted)}</pre>
+        </div>
+      `;
     } catch (e) {
-      alert('读取文件失败：' + e.message);
+      alert('JSON 解析失败: ' + e.message);
       return;
     }
-  } else {
-    // 其他类型：直接用直链触发下载（浏览器跟随 302 直链，无密码暴露）
+  } 
+  // CSV 预览（表格）
+  else if (/\.(csv|tsv)$/.test(lower)) {
+    try {
+      await loadLib('Papa', 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js');
+      
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+      
+      if (result.data.length === 0) {
+        inner = '<div class="empty">空文件</div>';
+      } else {
+        const headers = result.meta.fields || [];
+        let table = '<table class="csv-table"><thead><tr>';
+        headers.forEach(h => table += `<th>${esc(h)}</th>`);
+        table += '</tr></thead><tbody>';
+        
+        // 虚拟滚动：只显示前 100 行
+        const displayRows = result.data.slice(0, 100);
+        displayRows.forEach(row => {
+          table += '<tr>';
+          headers.forEach(h => table += `<td>${esc(row[h] || '')}</td>`);
+          table += '</tr>';
+        });
+        table += '</tbody></table>';
+        
+        if (result.data.length > 100) {
+          table += `<div class="empty">显示前 100 行，共 ${result.data.length} 行</div>`;
+        }
+        
+        inner = `
+          <div class="preview-controls">
+            <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          </div>
+          <div style="max-height:70vh;overflow:auto">${table}</div>
+        `;
+      }
+    } catch (e) {
+      alert('CSV 解析失败: ' + e.message);
+      return;
+    }
+  } 
+  // YAML 预览
+  else if (/\.(yaml|yml)$/.test(lower)) {
+    try {
+      await loadLib('jsyaml', 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
+      
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const data = jsyaml.load(text);
+      const formatted = JSON.stringify(data, null, 2);
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        </div>
+        <div style="max-height:70vh;overflow:auto">
+          <pre>${esc(formatted)}</pre>
+        </div>
+      `;
+    } catch (e) {
+      alert('YAML 解析失败: ' + e.message);
+      return;
+    }
+  } 
+  // XML 预览
+  else if (/\.xml$/.test(lower)) {
+    try {
+      const resp = await fetch(url);
+      const text = await resp.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(text, 'text/xml');
+      const formatted = new XMLSerializer().serializeToString(doc);
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        </div>
+        <div style="max-height:70vh;overflow:auto">
+          <pre>${esc(formatted)}</pre>
+        </div>
+      `;
+    } catch (e) {
+      alert('XML 解析失败: ' + e.message);
+      return;
+    }
+  } 
+  // 代码文件预览（语法高亮）
+  else if (/\.(txt|js|ts|py|java|c|cpp|h|hpp|css|html|ini|cfg|sh|bash|zsh|sql|go|rs|rb|php|pl|swift|kt|scala|r|lua|vim|dockerfile|makefile)$/.test(lower)) {
+    try {
+      await loadLib('hljs', 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js');
+      
+      const resp = await fetch(url);
+      const text = await resp.text();
+      
+      // 根据扩展名选择语言
+      const langMap = {
+        'js': 'javascript', 'ts': 'typescript', 'py': 'python',
+        'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
+        'css': 'css', 'html': 'xml', 'sql': 'sql',
+        'go': 'go', 'rs': 'rust', 'rb': 'ruby',
+        'php': 'php', 'sh': 'bash', 'bash': 'bash'
+      };
+      
+      const ext = lower.split('.').pop();
+      const lang = langMap[ext] || 'plaintext';
+      
+      let highlighted;
+      try {
+        highlighted = hljs.highlight(text, { language: lang }).value;
+      } catch (e) {
+        highlighted = esc(text);
+      }
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        </div>
+        <pre style="max-height:70vh;overflow:auto"><code class="hljs">${highlighted}</code></pre>
+      `;
+    } catch (e) {
+      // 降级：无高亮
+      const resp = await fetch(url);
+      const text = await resp.text();
+      inner = `<pre style="max-height:70vh;overflow:auto">${esc(text)}</pre>`;
+    }
+  } 
+  // ZIP 压缩包预览
+  else if (/\.zip$/.test(lower)) {
+    try {
+      await loadLib('fflate', 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
+      
+      const resp = await fetch(url);
+      const buffer = await resp.arrayBuffer();
+      const zip = fflate.unzipSync(new Uint8Array(buffer));
+      
+      let fileList = '<div class="zip-file-list"><strong>压缩包内容:</strong><ul>';
+      for (const [path, data] of Object.entries(zip)) {
+        const size = data.length;
+        fileList += `<li>
+          <span>${esc(path)}</span>
+          <span style="color:var(--muted);font-size:12px">${fmtSize(size)}</span>
+          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="extractZipFile('${esc(path)}', '${esc(url)}')">预览</button>
+          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="downloadZipFile('${esc(path)}', '${esc(url)}')">下载</button>
+        </li>`;
+      }
+      fileList += '</ul></div>';
+      
+      inner = `
+        <div class="preview-controls">
+          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        </div>
+        ${fileList}
+      `;
+    } catch (e) {
+      alert('ZIP 解析失败: ' + e.message);
+      return;
+    }
+  } 
+  // 字体文件预览
+  else if (/\.(ttf|otf|woff|woff2)$/.test(lower)) {
+    inner = `
+      <div class="preview-controls">
+        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+      </div>
+      <div style="text-align:center;padding:40px">
+        <div style="font-size:48px;font-family:CustomFont">AaBbCcDdEeFfGg</div>
+        <style>@font-face { font-family: 'CustomFont'; src: url('${url}'); }</style>
+        <div style="margin-top:20px;color:var(--muted)">字体预览</div>
+      </div>
+    `;
+  } 
+  // 其他类型：下载
+  else {
     window.location.href = url;
     return;
   }
+  
+  // 添加文件信息按钮
+  if (entry) {
+    inner = `
+      <div class="preview-controls" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px">
+        <button onclick="showFileInfo('${esc(path)}', '${esc(name)}', ${entry.size || 0}, '${esc(entry.mime || '')}')">文件信息</button>
+      </div>
+      ${inner}
+    `;
+  }
+  
   document.getElementById('modalBody').innerHTML = inner;
   document.getElementById('modal').classList.add('show');
+}
+
+// ZIP 文件预览
+async function extractZipFile(filePath, zipUrl) {
+  try {
+    const resp = await fetch(zipUrl);
+    const buffer = await resp.arrayBuffer();
+    const zip = fflate.unzipSync(new Uint8Array(buffer));
+    const data = zip[filePath];
+    
+    if (!data) {
+      alert('文件不存在');
+      return;
+    }
+    
+    // 根据文件类型预览
+    const ext = filePath.split('.').pop().toLowerCase();
+    const blob = new Blob([data]);
+    const url = URL.createObjectURL(blob);
+    
+    if (/\.(txt|md|json|js|ts|py|java|c|cpp|h|css|html|xml|yaml|yml|ini|cfg|sh|sql|go|rs|rb|php)$/.test(ext)) {
+      const text = new TextDecoder().decode(data);
+      const modal = document.createElement('div');
+      modal.className = 'pwmodal show';
+      modal.innerHTML = `
+        <div class="pwbox" style="width:90vw;max-width:800px">
+          <div class="pwtitle">${esc(filePath)}</div>
+          <pre style="max-height:70vh;overflow:auto">${esc(text)}</pre>
+          <div class="pwrow">
+            <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    } else if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(ext)) {
+      const modal = document.createElement('div');
+      modal.className = 'pwmodal show';
+      modal.innerHTML = `
+        <div class="pwbox">
+          <div class="pwtitle">${esc(filePath)}</div>
+          <img src="${url}" style="max-width:100%;max-height:70vh" />
+          <div class="pwrow">
+            <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    } else {
+      // 其他类型：下载
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filePath.split('/').pop();
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    alert('解压失败: ' + e.message);
+  }
+}
+
+// ZIP 文件下载
+async function downloadZipFile(filePath, zipUrl) {
+  try {
+    const resp = await fetch(zipUrl);
+    const buffer = await resp.arrayBuffer();
+    const zip = fflate.unzipSync(new Uint8Array(buffer));
+    const data = zip[filePath];
+    
+    if (!data) {
+      alert('文件不存在');
+      return;
+    }
+    
+    const blob = new Blob([data]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filePath.split('/').pop();
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('下载失败: ' + e.message);
+  }
+}
+
+// Markdown 原始文本切换
+function toggleRaw() {
+  const rendered = document.getElementById('mdRendered');
+  const raw = document.getElementById('mdRaw');
+  if (rendered && raw) {
+    const isHidden = rendered.style.display === 'none';
+    rendered.style.display = isHidden ? '' : 'none';
+    raw.style.display = isHidden ? 'none' : '';
+  }
+}
+
+// JSON 折叠切换
+function toggleJSON() {
+  const pre = document.querySelector('.json-viewer pre');
+  if (pre) {
+    const text = pre.textContent;
+    try {
+      const data = JSON.parse(text);
+      if (pre.dataset.collapsed === 'true') {
+        pre.textContent = JSON.stringify(data, null, 2);
+        pre.dataset.collapsed = 'false';
+      } else {
+        pre.textContent = JSON.stringify(data);
+        pre.dataset.collapsed = 'true';
+      }
+    } catch (e) {}
+  }
 }
 
 function closeModal() {

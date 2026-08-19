@@ -27,8 +27,8 @@ function isAuthenticated(c: Context<{ Bindings: Env }>): boolean {
 export async function handleLogin(c: Context<{ Bindings: Env }>) {
   const { password } = await c.req.json();
   
-  // 从环境变量获取管理员密码
-  const adminPassword = c.env.ADMIN_PASSWORD;
+  // 从 xlsx 配置获取管理员密码
+  const adminPassword = xlsxConfig.getConfig('admin_password');
   if (!adminPassword) {
     return c.json({ error: '管理员密码未配置' }, 500);
   }
@@ -123,7 +123,7 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
   
   const configAuth = c.env.CONFIG_AUTH;
   const configPath = c.env.CONFIG_PATH || '/';
-  const xlsxPassword = c.env.XLSX_PASSWORD;
+  const xlsxPassword = c.env.CONF_PW;
   const content = await xlsxConfig.generateXlsx(xlsxPassword);
   
   // 回落逻辑：优先指定位置 -> first-onedrive -> first-s3 -> 第一个存储

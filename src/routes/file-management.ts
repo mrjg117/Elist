@@ -18,8 +18,9 @@ async function requireAdmin(c: any) {
     return c.json({ error: '需要管理员密码' }, 401);
   }
   
-  // 从环境变量获取管理员密码
-  if (c.env.ADMIN_PASSWORD !== adminPassword) {
+  // 从 xlsx 配置获取管理员密码
+  const expectedPassword = xlsxConfig.getConfig('admin_password');
+  if (!expectedPassword || expectedPassword !== adminPassword) {
     return c.json({ error: '管理员密码错误' }, 403);
   }
   

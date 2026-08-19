@@ -94,7 +94,7 @@ async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Pro
       const xlsxPath = '/.elist.xlsx';
       const content = await driver.readBinary(xlsxPath);
       if (content) {
-        const xlsxPassword = c.env.XLSX_PASSWORD;
+        const xlsxPassword = c.env.CONF_PW;
         await xlsxConfig.parseXlsx(content, xlsxPassword);
         return;
       }

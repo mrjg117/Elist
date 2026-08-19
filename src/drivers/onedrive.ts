@@ -165,11 +165,89 @@ export class OneDriveDriver extends BaseDriver implements Driver {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Type': 'application/octet-stream',
       },
       body: content,
     });
     if (!r.ok) throw new Error(`OneDrive write failed: ${r.status}`);
+  }
+
+  async writeText(rest: string, content: string): Promise<void> {
+    const token = await this.getToken();
+    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+      body: content,
+    });
+    if (!r.ok) throw new Error(`OneDrive writeText failed: ${r.status}`);
+  }
+
+  async move(sourceRest: string, targetRest: string): Promise<void> {
+    const token = await this.getToken();
+    const sourceAp = this.toAccountPath(sourceRest);
+    const targetAp = this.toAccountPath(targetRest);
+    
+    // 提取目标路径的父目录和新名称
+    const lastSlash = targetAp.lastIndexOf('/');
+    const parentAp = lastSlash > 0 ? targetAp.substring(0, lastSlash) : '/';
+    const newName = targetAp.substring(lastSlash + 1);
+    
+    // 获取父目录的 driveItem ID
+    const parentItem = await this.graphGet(this.itemAddr(parentAp), 'id');
+    
+    // 移动/重命名
+    const r = await fetch(this.itemAddr(sourceAp), {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        parentReference: {
+          driveId: parentItem.parentReference?.driveId,
+          id: parentItem.id,
+        },
+        name: newName,
+      }),
+    });
+    if (!r.ok) throw new Error(`OneDrive move failed: ${r.status}`);
+  }
+
+  async delete(rest: string): Promise<void> {
+    const token = await this.getToken();
+    const r = await fetch(this.itemAddr(this.toAccountPath(rest)), {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) throw new Error(`OneDrive delete failed: ${r.status}`);
+  }
+
+  async mkdir(rest: string): Promise<void> {
+    const token = await this.getToken();
+    const ap = this.toAccountPath(rest);
+    
+    // 提取父目录和新目录名
+    const lastSlash = ap.lastIndexOf('/');
+    const parentAp = lastSlash > 0 ? ap.substring(0, lastSlash) : '/';
+    const dirName = ap.substring(lastSlash + 1);
+    
+    // 在父目录下创建子目录
+    const r = await fetch(this.addr(parentAp), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: dirName,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'fail',
+      }),
+    });
+    if (!r.ok) throw new Error(`OneDrive mkdir failed: ${r.status}`);
   }
 
   private toEntry(parentAccountPath: string, it: any): Entry {

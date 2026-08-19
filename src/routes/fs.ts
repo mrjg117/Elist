@@ -94,7 +94,8 @@ async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Pro
       const xlsxPath = '/.elist.xlsx';
       const content = await driver.readBinary(xlsxPath);
       if (content) {
-        xlsxConfig.parseXlsx(content);
+        const xlsxPassword = c.env.XLSX_PASSWORD;
+        await xlsxConfig.parseXlsx(content, xlsxPassword);
         return;
       }
     } catch (e) {
@@ -307,7 +308,8 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
   const { driver, rest } = configMount;
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
 
-  const content = xlsxConfig.generateXlsx();
+  const xlsxPassword = c.env.XLSX_PASSWORD;
+  const content = await xlsxConfig.generateXlsx(xlsxPassword);
   await driver.writeBinary(xlsxPath, content);
 
   xlsxConfig.clearDirty();
@@ -325,7 +327,8 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
     if (configMount) {
       const { driver, rest } = configMount;
       const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-      const content = xlsxConfig.generateXlsx();
+      const xlsxPassword = c.env.XLSX_PASSWORD;
+      const content = await xlsxConfig.generateXlsx(xlsxPassword);
       await driver.writeBinary(xlsxPath, content);
     }
   }

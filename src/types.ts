@@ -88,6 +88,16 @@ export interface Driver {
   readBinary(path: string): Promise<ArrayBuffer | null>;
   /** 写入文件二进制内容（用于保存 .elist.xlsx 配置）。 */
   writeBinary(path: string, content: ArrayBuffer): Promise<void>;
+  
+  // 文件管理方法（可选，部分存储可能不支持）
+  /** 写入文本文件（用于编辑文本文件）。 */
+  writeText?(path: string, content: string): Promise<void>;
+  /** 移动/重命名文件或目录（源路径 -> 目标路径）。 */
+  move?(sourcePath: string, targetPath: string): Promise<void>;
+  /** 删除文件或目录。 */
+  delete?(path: string): Promise<void>;
+  /** 创建目录。 */
+  mkdir?(path: string): Promise<void>;
 }
 
 export interface Env {

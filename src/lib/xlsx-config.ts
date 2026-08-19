@@ -6,6 +6,7 @@
  *   - 所有配置检查（密码、隐藏、登录等）走内存 Map（< 1ms）
  *   - 修改配置时先改内存，定期回写 xlsx
  *   - 清理缓存按钮：先回写 xlsx，再清内存
+ *   - 支持加密（使用 XLSX_PASSWORD 环境变量）
  *
  * xlsx 结构：
  *   Sheet1: passwords（路径密码配置）
@@ -16,7 +17,8 @@
  *     | key | value |
  */
 
-import * as XLSX from 'xlsx';
+import { createWorkbook, writeXlsx, readXlsx } from '@mitresthen/excelents';
+import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
 
 /** 内存中的配置数据 */
 interface ConfigData {
@@ -35,45 +37,59 @@ const data: ConfigData = {
   dirty: false,
 };
 
-/** 从 xlsx 二进制数据解析配置 */
-export function parseXlsx(buffer: ArrayBuffer): void {
-  const workbook = XLSX.read(buffer, { type: 'array' });
+/** 从 xlsx 二进制数据解析配置（支持加密） */
+export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
+  let workbook;
+
+  // 如果提供了密码，先解密
+  if (password) {
+    try {
+      const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
+      workbook = await readXlsx(decrypted);
+    } catch (e) {
+      // 解密失败，尝试作为未加密文件读取
+      workbook = await readXlsx(new Uint8Array(buffer));
+    }
+  } else {
+    workbook = await readXlsx(new Uint8Array(buffer));
+  }
 
   // Sheet1: passwords
-  const pwSheet = workbook.Sheets['passwords'];
+  const pwSheet = workbook.sheets.find(s => s.name === 'passwords');
   if (pwSheet) {
-    const pwData = XLSX.utils.sheet_to_json(pwSheet) as any[];
     data.passwords.clear();
-    for (const row of pwData) {
-      if (row.path && row.password) {
-        data.passwords.set(row.path, {
-          password: row.password,
-          hint: row.hint,
-        });
+    // 读取所有行
+    for (let row = 1; row <= pwSheet.dimensions.rows.max; row++) {
+      const path = pwSheet.cell(`A${row}`)?.value?.toString();
+      const pwd = pwSheet.cell(`B${row}`)?.value?.toString();
+      const hint = pwSheet.cell(`C${row}`)?.value?.toString();
+      if (path && pwd) {
+        data.passwords.set(path, { password: pwd, hint });
       }
     }
   }
 
   // Sheet2: hidden
-  const hiddenSheet = workbook.Sheets['hidden'];
+  const hiddenSheet = workbook.sheets.find(s => s.name === 'hidden');
   if (hiddenSheet) {
-    const hiddenData = XLSX.utils.sheet_to_json(hiddenSheet) as any[];
     data.hidden.clear();
-    for (const row of hiddenData) {
-      if (row.path) {
-        data.hidden.add(row.path);
+    for (let row = 1; row <= hiddenSheet.dimensions.rows.max; row++) {
+      const path = hiddenSheet.cell(`A${row}`)?.value?.toString();
+      if (path) {
+        data.hidden.add(path);
       }
     }
   }
 
   // Sheet3: config
-  const configSheet = workbook.Sheets['config'];
+  const configSheet = workbook.sheets.find(s => s.name === 'config');
   if (configSheet) {
-    const configData = XLSX.utils.sheet_to_json(configSheet) as any[];
     data.config.clear();
-    for (const row of configData) {
-      if (row.key && row.value !== undefined) {
-        data.config.set(row.key, String(row.value));
+    for (let row = 1; row <= configSheet.dimensions.rows.max; row++) {
+      const key = configSheet.cell(`A${row}`)?.value?.toString();
+      const value = configSheet.cell(`B${row}`)?.value?.toString();
+      if (key && value !== undefined) {
+        data.config.set(key, value);
       }
     }
   }
@@ -82,33 +98,55 @@ export function parseXlsx(buffer: ArrayBuffer): void {
   data.dirty = false;
 }
 
-/** 将内存配置生成 xlsx 二进制 */
-export function generateXlsx(): ArrayBuffer {
-  const workbook = XLSX.utils.book_new();
+/** 将内存配置生成 xlsx 二进制（支持加密） */
+export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
+  const workbook = createWorkbook();
 
   // Sheet1: passwords
-  const pwData = Array.from(data.passwords.entries()).map(([path, { password, hint }]) => ({
-    path,
-    password,
-    hint: hint || '',
-  }));
-  const pwSheet = XLSX.utils.json_to_sheet(pwData);
-  XLSX.utils.book_append_sheet(workbook, pwSheet, 'passwords');
+  const pwSheet = workbook.addSheet('passwords');
+  // 写入表头
+  pwSheet.cell('A1').value = 'path';
+  pwSheet.cell('B1').value = 'password';
+  pwSheet.cell('C1').value = 'hint';
+  // 写入数据
+  let row = 2;
+  for (const [path, { password: pwd, hint }] of data.passwords.entries()) {
+    pwSheet.cell(`A${row}`).value = path;
+    pwSheet.cell(`B${row}`).value = pwd;
+    pwSheet.cell(`C${row}`).value = hint || '';
+    row++;
+  }
 
   // Sheet2: hidden
-  const hiddenData = Array.from(data.hidden).map((path) => ({ path }));
-  const hiddenSheet = XLSX.utils.json_to_sheet(hiddenData);
-  XLSX.utils.book_append_sheet(workbook, hiddenSheet, 'hidden');
+  const hiddenSheet = workbook.addSheet('hidden');
+  hiddenSheet.cell('A1').value = 'path';
+  row = 2;
+  for (const path of data.hidden) {
+    hiddenSheet.cell(`A${row}`).value = path;
+    row++;
+  }
 
   // Sheet3: config
-  const configData = Array.from(data.config.entries()).map(([key, value]) => ({
-    key,
-    value,
-  }));
-  const configSheet = XLSX.utils.json_to_sheet(configData);
-  XLSX.utils.book_append_sheet(workbook, configSheet, 'config');
+  const configSheet = workbook.addSheet('config');
+  configSheet.cell('A1').value = 'key';
+  configSheet.cell('B1').value = 'value';
+  row = 2;
+  for (const [key, value] of data.config.entries()) {
+    configSheet.cell(`A${row}`).value = key;
+    configSheet.cell(`B${row}`).value = value;
+    row++;
+  }
 
-  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  // 生成 xlsx 文件
+  const xlsxBytes = await writeXlsx(workbook);
+
+  // 如果提供了密码，加密
+  if (password) {
+    const encrypted = await encryptWorkbook(xlsxBytes, password);
+    return encrypted.buffer;
+  }
+
+  return xlsxBytes.buffer;
 }
 
 /** 检查是否已加载 */

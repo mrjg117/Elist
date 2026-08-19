@@ -103,9 +103,10 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
-  // 写操作需要管理员验证
+  // 写操作需要管理员验证（从 xlsx 配置读取密码）
   const adminPassword = c.req.header('X-Admin-Password') || extractAdminPassword(c);
-  if (!adminPassword || c.env.ADMIN_PASSWORD !== adminPassword) {
+  const expectedPassword = xlsxConfig.getConfig('admin_password');
+  if (!adminPassword || !expectedPassword || expectedPassword !== adminPassword) {
     return c.body(null, 401, {
       'Content-Type': 'text/plain; charset=utf-8',
       'WWW-Authenticate': 'Basic realm="Elist Admin"',

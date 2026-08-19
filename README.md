@@ -141,8 +141,7 @@ npm run deploy
 | `CACHE_CONTROL` | 下载 302 的 Cache-Control | `public, max-age=300` |
 | `MOUNT_ORDER` | 根目录盘顺序，逗号分隔（如 `/od1,/s3`） | 配置顺序 |
 | `S3_LINK_TTL` | S3 下载直链有效期（秒） | `3600` |
-| `ADMIN_PASSWORD` | 管理员登录密码 | 无（必填才能使用管理功能） |
-| `XLSX_PASSWORD` | 配置文件加密密码 | 无（可选） |
+| `CONF_PW` | 配置文件加密密码 | 无（可选） |
 
 ---
 
@@ -174,7 +173,7 @@ npm run deploy
 |-------|-----|------|
 | passwords | path, password, hint | 目录密码配置 |
 | hidden | path | 隐藏目录列表 |
-| config | key, value | 全局配置（如登录密码） |
+| config | key, value | 全局配置（`admin_password` 等） |
 
 ---
 
@@ -182,7 +181,7 @@ npm run deploy
 
 ### 登录
 
-设置 `ADMIN_PASSWORD` 环境变量后，网页端右上角出现登录按钮。登录后可以：
+在 `.elist.xlsx` 的 `config` sheet 中配置 `admin_password` 后，网页端右上角出现登录按钮。登录后可以：
 
 - 配置各目录的密码和提示
 - 设置目录隐藏状态
@@ -262,7 +261,7 @@ WebDAV 挂在 `/dav` 下，支持完整的读写操作：
 
 **认证方式：**
 - `X-Admin-Password` 请求头
-- HTTP Basic Auth（用户名 `admin`，密码为 `ADMIN_PASSWORD`）
+- HTTP Basic Auth（用户名 `admin`，密码为 xlsx 配置中的 `admin_password`）
 
 门禁与网页端一致：受密码保护的路径同样要求密码，密码经 `X-Folder-Password` 请求头传递。
 

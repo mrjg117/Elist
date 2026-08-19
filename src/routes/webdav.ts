@@ -3,12 +3,13 @@ import type { Env, Mount } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
+import { getMounts } from '../config';
 
 /**
- * 只读 WebDAV handler（挂载在 /dav/*）。
- * 支持：OPTIONS / PROPFIND / GET / HEAD。
- * 拒绝所有写方法：PUT / MKCOL / DELETE / MOVE / COPY / LOCK / UNLOCK -> 405/403。
+ * WebDAV handler（挂载在 /dav/*）。
+ * 支持：OPTIONS / PROPFIND / GET / HEAD / PUT / MKCOL / DELETE / MOVE。
  * GET/HEAD 直接 302 到驱动直链（浏览器/客户端原生 Range 多线程）。
+ * 写操作需要管理员密码（X-Admin-Password 头或 Basic Auth 用户名）。
  *
  * 门禁：与网页端完全相同的 checkPathPassword 逻辑（级联 + 子层重新鉴权）。
  * 密码经 X-Folder-Password 请求头传递（可重复多个，与网页端同一套）。
@@ -57,14 +58,14 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 
   const baseUrl = `${url.protocol}//${url.host}/dav`;
 
-  // 写方法一律拒绝
-  if (['PUT', 'MKCOL', 'DELETE', 'MOVE', 'COPY', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(method)) {
-    return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+  // 不支持的方法拒绝
+  if (['COPY', 'LOCK', 'UNLOCK', 'PROPPATCH'].includes(method)) {
+    return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND, PUT, MKCOL, DELETE, MOVE' });
   }
 
   if (method === 'OPTIONS') {
     return c.body(null, 200, {
-      Allow: 'OPTIONS, GET, HEAD, PROPFIND',
+      Allow: 'OPTIONS, GET, HEAD, PROPFIND, PUT, MKCOL, DELETE, MOVE',
       DAV: '1, 2',
       'MS-Author-Via': 'DAV',
     });
@@ -102,5 +103,85 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
-  return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+  // 写操作需要管理员验证
+  const adminPassword = c.req.header('X-Admin-Password') || extractAdminPassword(c);
+  if (!adminPassword || c.env.ADMIN_PASSWORD !== adminPassword) {
+    return c.body(null, 401, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'WWW-Authenticate': 'Basic realm="Elist Admin"',
+    });
+  }
+
+  // PUT: 上传文件
+  if (method === 'PUT') {
+    if (!driver.writeText && !driver.writeBinary) {
+      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+    }
+    const body = await c.req.arrayBuffer();
+    const contentType = c.req.header('Content-Type') || 'application/octet-stream';
+    if (contentType.startsWith('text/') && driver.writeText) {
+      const text = new TextDecoder().decode(body);
+      await driver.writeText(rest, text);
+    } else if (driver.writeBinary) {
+      await driver.writeBinary(rest, body);
+    } else {
+      return c.body(null, 501);
+    }
+    return c.body(null, 201);
+  }
+
+  // MKCOL: 创建目录
+  if (method === 'MKCOL') {
+    if (!driver.mkdir) {
+      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+    }
+    await driver.mkdir(rest);
+    return c.body(null, 201);
+  }
+
+  // DELETE: 删除文件/目录
+  if (method === 'DELETE') {
+    if (!driver.delete) {
+      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+    }
+    await driver.delete(rest);
+    return c.body(null, 204);
+  }
+
+  // MOVE: 移动/重命名
+  if (method === 'MOVE') {
+    if (!driver.move) {
+      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+    }
+    const destination = c.req.header('Destination');
+    if (!destination) {
+      return c.body(null, 400);
+    }
+    const destUrl = new URL(destination);
+    const destPath = decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/';
+    const destMount = getMounts(c.env).find(m => destPath.startsWith(m.mount));
+    if (!destMount || destMount.mount !== mount.mount) {
+      return c.body(null, 400); // 不支持跨挂载点移动
+    }
+    const destRest = destPath.slice(mount.mount.length) || '/';
+    await driver.move(rest, destRest);
+    return c.body(null, 201);
+  }
+
+  return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND, PUT, MKCOL, DELETE, MOVE' });
+}
+
+/** 从 Basic Auth 提取管理员密码（用户名为 admin） */
+function extractAdminPassword(c: Context<{ Bindings: Env }>): string | null {
+  const auth = c.req.header('Authorization') || '';
+  if (!auth.toLowerCase().startsWith('basic ')) return null;
+  try {
+    const decoded = atob(auth.slice(6).trim());
+    const i = decoded.indexOf(':');
+    if (i < 0) return null;
+    const user = decoded.slice(0, i);
+    const pass = decoded.slice(i + 1);
+    if (user === 'admin') return pass;
+  } catch {}
+  return null;
 }

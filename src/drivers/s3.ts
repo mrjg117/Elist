@@ -119,10 +119,10 @@ export class S3Driver extends BaseDriver implements Driver {
     };
     const qEntries = Object.entries(query).sort(([a], [b]) => a.localeCompare(b));
     const canonicalQuery = qEntries
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`)
       .join('&');
     // S3 要求路径中每个 segment 单独 URI 编码（保留 / 作为路径分隔符）
-    const encodedKey = key.split('/').map(encodeURIComponent).join('/');
+    const encodedKey = encodeS3Key(key);
     const canonicalRequest = [
       'GET',
       `/${this.bucket}/${encodedKey}`,
@@ -153,16 +153,17 @@ export class S3Driver extends BaseDriver implements Driver {
 
     // 分页获取所有结果
     do {
-      const q = new URLSearchParams({
+      const params: Record<string, string> = {
         'list-type': '2',
         prefix,
         delimiter: '/',
-      });
+      };
       if (continuationToken) {
-        q.set('continuation-token', continuationToken);
+        params['continuation-token'] = continuationToken;
       }
-      const url = `${this.endpoint}/${this.bucket}?${q.toString()}`;
-      const headers = await this.signHeaders('GET', url, paramsToObj(q), EMPTY_SHA256);
+      const queryString = buildCanonicalQuery(params);
+      const url = `${this.endpoint}/${this.bucket}?${queryString}`;
+      const headers = await this.signHeaders('GET', url, params, EMPTY_SHA256);
       const r = await fetch(url, { headers });
       if (!r.ok) throw new Error(`S3 list failed: ${r.status}`);
       const xml = await r.text();

@@ -3,7 +3,7 @@ import type { Env, Mount, Entry } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
-import { getMounts } from '../config';
+import { getMounts, findMount } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { loadXlsxConfig } from './fs';
 import { extractAdminPassword } from '../lib/auth';
@@ -104,15 +104,30 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     // 尝试列出目录内容，如果失败则可能是文件
     let entries: Entry[] = [];
     let isDir = true;
+    let selfEntry: Entry | null = null;
+    
     try {
       entries = (await driver.list(rest)).filter((e) => !MARKER_FILES.has(e.name));
     } catch {
-      // list 失败，可能是文件路径
+      // list 失败，可能是文件路径，尝试获取文件元数据
       isDir = false;
+      try {
+        // 尝试获取文件信息
+        const link = await driver.link(rest);
+        selfEntry = {
+          name: rest.split('/').pop() || '',
+          path: rest,
+          isDir: false,
+          size: 0, // 无法获取实际大小
+          modified: '', // 无法获取实际修改时间
+        };
+      } catch {
+        // 获取失败，返回空信息
+      }
     }
     
     const includeSelf = depth !== '0';
-    const xml = buildPropfind(baseUrl, storagePath, entries, includeSelf, isDir);
+    const xml = buildPropfind(baseUrl, storagePath, entries, includeSelf, isDir, selfEntry);
     return new Response(xml, {
       status: 207,
       headers: {
@@ -179,17 +194,12 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     }
     const destUrl = new URL(destination);
     const destPath = decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/';
-    const destMount = getMounts(c.env).find(m =>
-      destPath === m.mount ||
-      (m.mount === '/' ? true : destPath.startsWith(m.mount + '/'))
-    );
-    if (!destMount || destMount.mount !== mount.mount) {
+    const destMountResult = findMount(getMounts(c.env), destPath);
+    if (!destMountResult || destMountResult.mount.mount !== mount.mount) {
       return c.body(null, 400); // 不支持跨挂载点移动
     }
-    // 正确计算 rest（处理根挂载 '/' 的情况）
-    const destRest = destMount.mount === '/' 
-      ? destPath 
-      : destPath.slice(destMount.mount.length) || '/';
+    // 使用 findMount 计算的 rest（已处理根挂载 '/' 的情况）
+    const destRest = destMountResult.rest;
     await driver.move(rest, destRest);
     return c.body(null, 201);
   }

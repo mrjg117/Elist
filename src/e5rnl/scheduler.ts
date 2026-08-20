@@ -28,6 +28,31 @@ export interface RenewalOptions {
   actionDelayMaxMs?: number;
 }
 
+/** 全局共享 API 调用计数器，用于跨账号硬限制 */
+export class GlobalApiCounter {
+  private _count = 0;
+  private _limit: number;
+
+  constructor(limit: number) {
+    this._limit = limit;
+  }
+
+  get count(): number {
+    return this._count;
+  }
+
+  get remaining(): number {
+    return Math.max(0, this._limit - this._count);
+  }
+
+  /** 尝试增加计数，成功返回 true，达到上限返回 false */
+  tryIncrement(): boolean {
+    if (this._count >= this._limit) return false;
+    this._count++;
+    return true;
+  }
+}
+
 export interface RenewalResult {
   action: string;
   ok: boolean;
@@ -40,12 +65,14 @@ export interface RenewalResult {
 /**
  * 为单个账号执行续期或刷缓存。
  * @param budget 该账号的 API 调用预算
+ * @param globalCounter 全局 API 调用计数器（可选）
  */
 export async function runRenewalForAccount(
   config: RenewalConfig,
   getToken: () => Promise<string>,
   budget: number,
-  options: RenewalOptions = {}
+  options: RenewalOptions = {},
+  globalCounter?: GlobalApiCounter
 ): Promise<RenewalResult[]> {
   const maxRuntimeMs = options.maxRuntimeMs ?? 25000;
   const concurrency = options.concurrency ?? 6;
@@ -58,6 +85,13 @@ export async function runRenewalForAccount(
 
   // 构建 Graph API 调用函数
   const graphCall = async (method: string, path: string, body?: any, absolute?: boolean) => {
+    // 检查全局计数器（如果提供）
+    if (globalCounter && !globalCounter.tryIncrement()) {
+      const err = new Error('Global API call limit reached');
+      (err as any).code = 'BUDGET';
+      throw err;
+    }
+    // 检查账号级预算
     if (apiCalls >= budget) {
       const err = new Error('API call limit reached');
       (err as any).code = 'BUDGET';

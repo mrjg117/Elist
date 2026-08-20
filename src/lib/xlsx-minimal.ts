@@ -11,6 +11,28 @@
  * - xl/styles.xml (可选)
  */
 
+/** CRC32 查找表 */
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[i] = c;
+  }
+  return table;
+})();
+
+/** 计算 CRC32 */
+function crc32(data: Uint8Array): number {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc = CRC32_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
 /** 解压 ZIP 文件 */
 async function unzip(buffer: ArrayBuffer): Promise<Map<string, string>> {
   const files = new Map<string, string>();
@@ -83,6 +105,9 @@ async function zip(files: Map<string, Uint8Array>): Promise<ArrayBuffer> {
   for (const [name, content] of files.entries()) {
     const nameBytes = new TextEncoder().encode(name);
     
+    // 计算原始数据的 CRC32
+    const checksum = crc32(content);
+    
     // 压缩内容
     const cs = new CompressionStream('deflate-raw');
     const writer = cs.writable.getWriter();
@@ -115,7 +140,7 @@ async function zip(files: Map<string, Uint8Array>): Promise<ArrayBuffer> {
     view.setUint16(8, 8, true); // 压缩方法 (DEFLATE)
     view.setUint16(10, 0, true); // 修改时间
     view.setUint16(12, 0, true); // 修改日期
-    view.setUint32(14, 0, true); // CRC32 (简化：设为0)
+    view.setUint32(14, checksum, true); // CRC32
     view.setUint32(18, compressed.length, true); // 压缩大小
     view.setUint32(22, content.length, true); // 原始大小
     view.setUint16(26, nameBytes.length, true); // 文件名长度
@@ -135,7 +160,7 @@ async function zip(files: Map<string, Uint8Array>): Promise<ArrayBuffer> {
     cView.setUint16(10, 8, true); // 压缩方法
     cView.setUint16(12, 0, true); // 修改时间
     cView.setUint16(14, 0, true); // 修改日期
-    cView.setUint32(16, 0, true); // CRC32
+    cView.setUint32(16, checksum, true); // CRC32
     cView.setUint32(20, compressed.length, true); // 压缩大小
     cView.setUint32(24, content.length, true); // 原始大小
     cView.setUint16(28, nameBytes.length, true); // 文件名长度
@@ -206,8 +231,6 @@ function extractCells(sheetXml: string, sharedStrings: string[]): string[][] {
       const colIndex = colLetterToIndex(colLetter);
       
       const type = cell.getAttribute('t');
-      const valueEl = cell.getElementsByTagName('v')[0];
-      const value = valueEl?.textContent || '';
       
       // 确保数组足够长
       while (cells.length <= colIndex) {
@@ -216,10 +239,20 @@ function extractCells(sheetXml: string, sharedStrings: string[]): string[][] {
       
       if (type === 's') {
         // 共享字符串
-        const idx = parseInt(value);
+        const valueEl = cell.getElementsByTagName('v')[0];
+        const idx = parseInt(valueEl?.textContent || '0');
         cells[colIndex] = sharedStrings[idx] || '';
+      } else if (type === 'inlineStr') {
+        // 内联字符串：从 <is><t> 提取
+        const isEl = cell.getElementsByTagName('is')[0];
+        if (isEl) {
+          const tEls = Array.from(isEl.getElementsByTagName('t'));
+          cells[colIndex] = tEls.map(t => t.textContent || '').join('');
+        }
       } else {
-        cells[colIndex] = value;
+        // 其他类型（数字、布尔等）从 <v> 提取
+        const valueEl = cell.getElementsByTagName('v')[0];
+        cells[colIndex] = valueEl?.textContent || '';
       }
     }
     

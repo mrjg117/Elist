@@ -116,7 +116,7 @@ npm run deploy
       "user_id": "user@org.com",
       "mounts": [
         { "path": "/od1", "root": "/", "title": "我的网盘" },
-        { "path": "/od1/photos", "root": "/Photos", "title": "照片", "hide": false, "e5rnl": true }
+        { "path": "/od1/photos", "root": "/Photos", "title": "照片", "e5rnl": true }
       ]
     }
   ]

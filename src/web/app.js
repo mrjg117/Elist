@@ -27,7 +27,7 @@ async function loadLib(name, url) {
 }
 
 function esc(s) {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // 客户端已知密码集合：进入受保护层级时弹窗收集，存入 Set。
@@ -163,8 +163,9 @@ function renderGridView(entries, listEl) {
   listEl.innerHTML = entries
     .map((e) => {
       const isImage = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(e.name);
+      // 用 data-src 延迟加载，后续用 fetch 带密码头获取缩略图
       const thumb = isImage 
-        ? `<img src="/api/link?path=${encodeURIComponent(e.path)}" loading="lazy" />`
+        ? `<img data-src="${esc(e.path)}" class="lazy-thumb" loading="lazy" />`
         : `<div class="icon">${e.isDir ? '📁' : '📄'}</div>`;
       return `<div class="grid-item" data-path="${esc(e.path)}" data-dir="${e.isDir}">
         <div class="thumb">${thumb}</div>
@@ -172,6 +173,13 @@ function renderGridView(entries, listEl) {
       </div>`;
     })
     .join('');
+  // 用 fetch 加载缩略图，带密码头
+  listEl.querySelectorAll('.lazy-thumb').forEach((img) => {
+    const path = img.dataset.src;
+    loadThumb(path).then(url => {
+      if (url) img.src = url;
+    }).catch(() => {});
+  });
   listEl.querySelectorAll('.grid-item').forEach((item) => {
     item.onclick = () => {
       const p = item.dataset.path;
@@ -179,6 +187,13 @@ function renderGridView(entries, listEl) {
       else preview(p, item.querySelector('.name').textContent);
     };
   });
+}
+
+async function loadThumb(path) {
+  const res = await fetch(`/api/link?path=${encodeURIComponent(path)}`, { headers: pwHeaders() });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.url || null;
 }
 
 function fmtSize(n) {

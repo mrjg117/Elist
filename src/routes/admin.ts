@@ -9,7 +9,10 @@ import { loadXlsxConfig } from './fs';
 const sessions = new Set<string>();
 
 function generateSessionId(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  // 使用 crypto.getRandomValues 生成安全的随机 session ID
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function getSessionId(c: Context<{ Bindings: Env }>): string | null {

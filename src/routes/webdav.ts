@@ -182,7 +182,10 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     if (!destMount || destMount.mount !== mount.mount) {
       return c.body(null, 400); // 不支持跨挂载点移动
     }
-    const destRest = destPath.slice(mount.mount.length) || '/';
+    // 正确计算 rest（处理根挂载 '/' 的情况）
+    const destRest = destMount.mount === '/' 
+      ? destPath 
+      : destPath.slice(destMount.mount.length) || '/';
     await driver.move(rest, destRest);
     return c.body(null, 201);
   }

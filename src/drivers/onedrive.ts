@@ -126,8 +126,20 @@ export class OneDriveDriver extends BaseDriver implements Driver {
 
   async list(rest: string): Promise<Entry[]> {
     const ap = this.toAccountPath(rest);
-    const data = await this.graphGet(this.addr(ap));
-    return (data.value || []).map((it: any) => this.toEntry(ap, it));
+    const allEntries: Entry[] = [];
+    let url: string | null = this.addr(ap);
+
+    // 分页获取所有结果（Graph API 默认 200 条/页）
+    while (url) {
+      const data = await this.graphGet(url);
+      const entries = (data.value || []).map((it: any) => this.toEntry(ap, it));
+      allEntries.push(...entries);
+
+      // 检查是否有下一页
+      url = data['@odata.nextLink'] || null;
+    }
+
+    return allEntries;
   }
 
   async link(rest: string): Promise<string> {

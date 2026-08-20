@@ -30,26 +30,16 @@ app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
 app.post('/api/config/save', async (c) => {
   // 需要管理员鉴权
-  const adminPassword = c.req.header('X-Admin-Password');
-  if (!adminPassword) {
-    return c.json({ error: '需要管理员密码' }, 401);
-  }
-  const expectedPassword = (await import('./lib/xlsx-config')).getConfig('admin_password');
-  if (!expectedPassword || expectedPassword !== adminPassword) {
-    return c.json({ error: '管理员密码错误' }, 403);
-  }
+  const { requireAdmin } = await import('./lib/auth');
+  const adminError = await requireAdmin(c);
+  if (adminError) return adminError;
   return handleConfigSave(c);
 });
 app.post('/api/config/clear', async (c) => {
   // 需要管理员鉴权
-  const adminPassword = c.req.header('X-Admin-Password');
-  if (!adminPassword) {
-    return c.json({ error: '需要管理员密码' }, 401);
-  }
-  const expectedPassword = (await import('./lib/xlsx-config')).getConfig('admin_password');
-  if (!expectedPassword || expectedPassword !== adminPassword) {
-    return c.json({ error: '管理员密码错误' }, 403);
-  }
+  const { requireAdmin } = await import('./lib/auth');
+  const adminError = await requireAdmin(c);
+  if (adminError) return adminError;
   return handleConfigClear(c);
 });
 

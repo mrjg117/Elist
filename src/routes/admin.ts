@@ -2,17 +2,35 @@ import type { Context } from 'hono';
 import type { Env } from '../types';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { getMounts } from '../config';
-import { dispatch } from '../lib/dispatch';
 import { loadXlsxConfig } from './fs';
 
-// 简单的会话管理（内存存储）
-const sessions = new Set<string>();
+// 会话管理（内存存储，带过期时间）
+interface Session {
+  id: string;
+  createdAt: number;
+}
+
+const sessions = new Map<string, Session>();
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 天
 
 function generateSessionId(): string {
   // 使用 crypto.getRandomValues 生成安全的随机 session ID
   const arr = new Uint8Array(32);
   crypto.getRandomValues(arr);
-  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+  const id = Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+  const now = Date.now();
+  sessions.set(id, { id, createdAt: now });
+  cleanupSessions();
+  return id;
+}
+
+function cleanupSessions(): void {
+  const now = Date.now();
+  for (const [id, session] of sessions.entries()) {
+    if (now - session.createdAt > SESSION_MAX_AGE) {
+      sessions.delete(id);
+    }
+  }
 }
 
 function getSessionId(c: Context<{ Bindings: Env }>): string | null {
@@ -24,7 +42,18 @@ function getSessionId(c: Context<{ Bindings: Env }>): string | null {
 
 function isAuthenticated(c: Context<{ Bindings: Env }>): boolean {
   const sessionId = getSessionId(c);
-  return sessionId !== null && sessions.has(sessionId);
+  if (!sessionId) return false;
+  
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  
+  // 检查是否过期
+  if (Date.now() - session.createdAt > SESSION_MAX_AGE) {
+    sessions.delete(sessionId);
+    return false;
+  }
+  
+  return true;
 }
 
 // POST /api/admin/login
@@ -44,9 +73,8 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
     return c.json({ error: '密码错误' }, 401);
   }
   
-  // 生成会话
+  // 生成会话（generateSessionId 内部已注册到 sessions Map）
   const sessionId = generateSessionId();
-  sessions.add(sessionId);
   
   // 设置cookie（7天有效期）
   const maxAge = 7 * 24 * 60 * 60;

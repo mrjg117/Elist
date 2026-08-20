@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { checkPathPassword } from '../lib/acl';
 import { getMounts } from '../config';
-import * as xlsxConfig from '../lib/xlsx-config';
+import { requireAdmin } from '../lib/auth';
 import { loadXlsxConfig } from './fs';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -12,22 +12,6 @@ const app = new Hono<{ Bindings: Env }>();
  * 文件管理 API - 需要管理员权限
  * 所有操作都需要先验证管理员密码
  */
-
-// 验证管理员权限
-async function requireAdmin(c: any) {
-  const adminPassword = c.req.header('X-Admin-Password');
-  if (!adminPassword) {
-    return c.json({ error: '需要管理员密码' }, 401);
-  }
-  
-  // 从 xlsx 配置获取管理员密码
-  const expectedPassword = xlsxConfig.getConfig('admin_password');
-  if (!expectedPassword || expectedPassword !== adminPassword) {
-    return c.json({ error: '管理员密码错误' }, 403);
-  }
-  
-  return null;
-}
 
 // 写入文本文件
 app.post('/write-text', async (c) => {

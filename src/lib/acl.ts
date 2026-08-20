@@ -3,6 +3,30 @@ export type ReadText = (path: string) => Promise<string | null>;
 import * as xlsxConfig from './xlsx-config';
 
 /**
+ * 恒定时间字符串比较，防止计时攻击。
+ * 即使长度不同，也会遍历完整长度再返回结果。
+ */
+function constantTimeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // 长度不同，但仍需遍历较长字符串的长度
+    const maxLen = Math.max(a.length, b.length);
+    let result = a.length ^ b.length;
+    for (let i = 0; i < maxLen; i++) {
+      const ca = i < a.length ? a.charCodeAt(i) : 0;
+      const cb = i < b.length ? b.charCodeAt(i) : 0;
+      result |= ca ^ cb;
+    }
+    return result === 0;
+  }
+  
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+/**
  * 文件夹级访问门禁：基于 .elist.xlsx 集中配置（内存 Map）。
  *
  * 设计：
@@ -41,7 +65,9 @@ export async function checkPathPassword(
     if (!pwConfig) continue; // 无密码配置 = 该层公开
 
     const expectedPassword = pwConfig.password;
-    if (!provided.includes(expectedPassword)) {
+    // 使用恒定时间比较，防止计时攻击
+    const matched = provided.some(p => constantTimeCompare(p, expectedPassword));
+    if (!matched) {
       return { ok: false, lockedAt: acc };
     }
   }

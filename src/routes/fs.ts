@@ -400,18 +400,41 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const q = (c.req.query('q') || '').toLowerCase();
   const path = c.req.query('path') || '/';
   if (!q) return c.json([], 200);
-  
+
+  // 确保配置已加载
+  await loadXlsxConfig(c, false);
+
+  // 获取用户已知密码集合
+  const pws = collectPws(c);
+
   // 根目录搜索：遍历所有挂载点，合并结果
   if (path === '/') {
-    const matched = searchListings(q).slice(0, 200);
+    const all = searchListings(q);
+    // 过滤：只返回用户有权限访问的目录
+    const matched = [];
+    for (const entry of all) {
+      const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+      const gate = await checkPathPassword(parentPath, pws);
+      if (gate.ok) {
+        matched.push(entry);
+        if (matched.length >= 200) break;
+      }
+    }
     return c.json(matched);
   }
-  
+
   const { mount } = await dispatch(c.env, path);
 
-  // 缓存内的条目均来自已鉴权浏览，无需逐条再验门禁；仅做盘范围过滤。
-  const matched = searchListings(q)
-    .filter((e) => e.path.startsWith(mount.mount))
-    .slice(0, 200);
+  // 缓存内的条目均来自已鉴权浏览，但需要验证密码保护
+  const all = searchListings(q).filter((e) => e.path.startsWith(mount.mount));
+  const matched = [];
+  for (const entry of all) {
+    const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+    const gate = await checkPathPassword(parentPath, pws);
+    if (gate.ok) {
+      matched.push(entry);
+      if (matched.length >= 200) break;
+    }
+  }
   return c.json(matched);
 }

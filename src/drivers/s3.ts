@@ -299,25 +299,29 @@ export class S3Driver extends BaseDriver implements Driver {
         throw new Error(`S3 move failed: source not found`);
       }
 
-      // 递归复制和删除
-      for (const key of keys) {
-        const newKey = targetPrefix + key.slice(sourcePrefix.length);
-        const newCopyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(newKey)}`;
-        const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
-        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(key)}`;
-        const newCopyResp = await fetch(newCopyUrl, {
-          method: 'PUT',
-          headers: newCopyHeaders,
-        });
-        if (!newCopyResp.ok) throw new Error(`S3 copy failed: ${newCopyResp.status}`);
+      // 递归复制和删除（并发处理，每批 10 个）
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+        const batch = keys.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (key) => {
+          const newKey = targetPrefix + key.slice(sourcePrefix.length);
+          const newCopyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(newKey)}`;
+          const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
+          newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(key)}`;
+          const newCopyResp = await fetch(newCopyUrl, {
+            method: 'PUT',
+            headers: newCopyHeaders,
+          });
+          if (!newCopyResp.ok) throw new Error(`S3 copy failed: ${newCopyResp.status}`);
 
-        const newDeleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
-        const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
-        const newDeleteResp = await fetch(newDeleteUrl, {
-          method: 'DELETE',
-          headers: newDeleteHeaders,
-        });
-        if (!newDeleteResp.ok) throw new Error(`S3 delete source failed: ${newDeleteResp.status}`);
+          const newDeleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
+          const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
+          const newDeleteResp = await fetch(newDeleteUrl, {
+            method: 'DELETE',
+            headers: newDeleteHeaders,
+          });
+          if (!newDeleteResp.ok) throw new Error(`S3 delete source failed: ${newDeleteResp.status}`);
+        }));
       }
     } else {
       throw new Error(`S3 copy failed: ${copyResp.status}`);

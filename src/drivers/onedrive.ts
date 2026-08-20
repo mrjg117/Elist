@@ -278,11 +278,12 @@ export class OneDriveDriver extends BaseDriver implements Driver {
   }
 }
 
-/** 带 429 退避的 fetch（OneDrive 限流阈值低，必须节流）。 */
+/** 带退避的 fetch（OneDrive 限流阈值低，必须节流；5xx 服务端错误也重试）。 */
 async function backoffFetch(url: string, init: RequestInit, attempt = 0): Promise<any> {
   const r = await fetch(url, init);
-  if (r.status === 429 || r.status === 503) {
-    if (attempt > 4) throw new Error(`OD throttled: ${r.status}`);
+  // 429 限流、503 服务不可用、以及其他 5xx 服务端错误都重试
+  if (r.status === 429 || r.status === 503 || (r.status >= 500 && r.status < 600)) {
+    if (attempt > 4) throw new Error(`OD error: ${r.status}`);
     const wait = Math.min(2 ** attempt * 500, 8000);
     await new Promise((res) => setTimeout(res, wait));
     return backoffFetch(url, init, attempt + 1);

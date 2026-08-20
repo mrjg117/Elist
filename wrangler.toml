@@ -55,4 +55,4 @@ CACHE_CONTROL = "public, max-age=300"
 crons = ["*/10 * * * *"]
 
 # 注意：本方案刻意不使用 [[d1_databases]] / [[kv_namespaces]]，
-# 所有状态 = env vars(secret) + 存储内 .passwd/.hidden 标记文件，零 KV/D1/SQL。
+# 所有状态 = env vars(secret) + 存储内 .elist.xlsx 配置文件，零 KV/D1/SQL。

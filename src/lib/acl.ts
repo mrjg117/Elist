@@ -6,7 +6,7 @@ import * as xlsxConfig from './xlsx-config';
  * 恒定时间字符串比较，防止计时攻击。
  * 即使长度不同，也会遍历完整长度再返回结果。
  */
-function constantTimeCompare(a: string, b: string): boolean {
+export function constantTimeCompare(a: string, b: string): boolean {
   if (a.length !== b.length) {
     // 长度不同，但仍需遍历较长字符串的长度
     const maxLen = Math.max(a.length, b.length);

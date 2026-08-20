@@ -8,6 +8,7 @@ import {
   MARKER_FILES,
 } from '../lib/acl';
 import { getListing, setListing, searchListings } from '../lib/cache';
+import { normalize } from '../config';
 import { getRoots, getMounts } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
 
@@ -69,29 +70,74 @@ export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string
   return accounts;
 }
 
+// in-flight 去重：防止并发请求重复加载配置
+let pendingLoad: Promise<void> | null = null;
+
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
 export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
   if (xlsxConfig.isLoaded() && !fresh) return;
 
-  const configPath = c.env.CONFIG_PATH || '/';
-  const configAuth = c.env.CONFIG_AUTH;
-  const accounts = getAllAuthAccounts(c.env);
-  let hasError = false;
+  // in-flight 去重：如果已有加载任务在进行，直接复用
+  if (pendingLoad && !fresh) {
+    return pendingLoad;
+  }
 
-  // 优先检测 CONFIG_AUTH 指定的账号
-  if (configAuth) {
-    const targetAccount = accounts.find(a => a.name === configAuth);
-    if (targetAccount) {
-      try {
-        const { getDriverClass } = await import('../drivers/registry');
-        const DriverClass = getDriverClass(targetAccount.type);
-        if (DriverClass) {
+  // 创建加载 Promise 并赋值给 pendingLoad
+  pendingLoad = (async () => {
+    const configPath = c.env.CONFIG_PATH || '/';
+    const configAuth = c.env.CONFIG_AUTH;
+    const accounts = getAllAuthAccounts(c.env);
+    let hasError = false;
+
+    // 优先检测 CONFIG_AUTH 指定的账号
+    if (configAuth) {
+      const targetAccount = accounts.find(a => a.name === configAuth);
+      if (targetAccount) {
+        try {
+          const { getDriverClass } = await import('../drivers/registry');
+          const DriverClass = getDriverClass(targetAccount.type);
+          if (DriverClass) {
+            const driver = new DriverClass();
+            await driver.init({
+              mount: '/',
+              root: configPath,
+              driver: targetAccount.type,
+              addition: targetAccount.auth,
+            }, c.env);
+
+            const xlsxPath = '/.elist.xlsx';
+            const content = await driver.readBinary(xlsxPath);
+            if (content) {
+              const xlsxPassword = c.env.CONF_PW;
+              await xlsxConfig.parseXlsx(content, xlsxPassword);
+              return;
+            }
+            // 文件不存在，继续尝试其他账号
+          }
+        } catch (e) {
+          // 读取失败（网络/权限等），记录错误但不继续遍历
+          // 因为 CONFIG_AUTH 明确指定了账号，其他账号的配置可能不适用
+          hasError = true;
+          console.error('Failed to load config from CONFIG_AUTH account:', e);
+        }
+      }
+    }
+
+    // 如果没有指定 CONFIG_AUTH 或指定账号没有配置文件，遍历其他账号
+    if (!configAuth || !hasError) {
+      for (const account of accounts) {
+        if (configAuth && account.name === configAuth) continue; // 已尝试过
+        try {
+          const { getDriverClass } = await import('../drivers/registry');
+          const DriverClass = getDriverClass(account.type);
+          if (!DriverClass) continue;
+
           const driver = new DriverClass();
           await driver.init({
             mount: '/',
             root: configPath,
-            driver: targetAccount.type,
-            addition: targetAccount.auth,
+            driver: account.type,
+            addition: account.auth,
           }, c.env);
 
           const xlsxPath = '/.elist.xlsx';
@@ -101,55 +147,28 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
             await xlsxConfig.parseXlsx(content, xlsxPassword);
             return;
           }
-          // 文件不存在，继续尝试其他账号
+        } catch (e) {
+          // 读取失败，记录但继续尝试下一个
+          hasError = true;
+          console.error('Failed to load config from account:', account.name, e);
+          continue;
         }
-      } catch (e) {
-        // 读取失败（网络/权限等），记录错误但不继续遍历
-        // 因为 CONFIG_AUTH 明确指定了账号，其他账号的配置可能不适用
-        hasError = true;
-        console.error('Failed to load config from CONFIG_AUTH account:', e);
       }
     }
-  }
 
-  // 如果没有指定 CONFIG_AUTH 或指定账号没有配置文件，遍历其他账号
-  if (!configAuth || !hasError) {
-    for (const account of accounts) {
-      if (configAuth && account.name === configAuth) continue; // 已尝试过
-      try {
-        const { getDriverClass } = await import('../drivers/registry');
-        const DriverClass = getDriverClass(account.type);
-        if (!DriverClass) continue;
-
-        const driver = new DriverClass();
-        await driver.init({
-          mount: '/',
-          root: configPath,
-          driver: account.type,
-          addition: account.auth,
-        }, c.env);
-
-        const xlsxPath = '/.elist.xlsx';
-        const content = await driver.readBinary(xlsxPath);
-        if (content) {
-          const xlsxPassword = c.env.CONF_PW;
-          await xlsxConfig.parseXlsx(content, xlsxPassword);
-          return;
-        }
-      } catch (e) {
-        // 读取失败，记录但继续尝试下一个
-        hasError = true;
-        console.error('Failed to load config from account:', account.name, e);
-        continue;
-      }
+    // 没有找到 .elist.xlsx
+    // 如果有错误发生，不标记为已加载（保持安全状态）
+    // 否则标记为已加载（空配置）
+    if (!hasError) {
+      xlsxConfig.markLoaded();
     }
-  }
-  
-  // 没有找到 .elist.xlsx
-  // 如果有错误发生，不标记为已加载（保持安全状态）
-  // 否则标记为已加载（空配置）
-  if (!hasError) {
-    xlsxConfig.markLoaded();
+  })();
+
+  try {
+    await pendingLoad;
+  } finally {
+    // 加载完成后清空 pendingLoad，允许下次 fresh=true 重新加载
+    pendingLoad = null;
   }
 }
 
@@ -229,7 +248,7 @@ function sortEntries<T extends Entry>(entries: T[], spec?: string): T[] {
  * 密码经 X-Folder-Password 请求头传递（可多个），不进 URL。
  */
 export async function handleList(c: Context<{ Bindings: Env }>) {
-  const path = c.req.query('path') || '/';
+  const path = normalize(c.req.query('path') || '/');
   const pws = collectPws(c);
   const fresh = isFresh(c);
 
@@ -284,16 +303,17 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
 export async function handleLink(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
+  const normalizedPath = normalize(path);
   const pws = collectPws(c);
   const fresh = isFresh(c);
 
   // 确保配置已加载（防止冷启动绕过门禁）
   await loadXlsxConfig(c, fresh);
 
-  const { driver, rest, mount } = await dispatch(c.env, path);
+  const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
+  const gate = await checkPathPassword(parentDir(normalizedPath), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -308,16 +328,17 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
 export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
+  const normalizedPath = normalize(path);
   const pws = collectPws(c);
   const fresh = isFresh(c);
 
   // 确保配置已加载（防止冷启动绕过门禁）
   await loadXlsxConfig(c, fresh);
 
-  const { driver, rest, mount } = await dispatch(c.env, path);
+  const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
+  const gate = await checkPathPassword(parentDir(normalizedPath), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -398,7 +419,7 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
  */
 export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const q = (c.req.query('q') || '').toLowerCase();
-  const path = c.req.query('path') || '/';
+  const path = normalize(c.req.query('path') || '/');
   if (!q) return c.json([], 200);
 
   // 确保配置已加载

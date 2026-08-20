@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../types';
 import * as xlsxConfig from '../lib/xlsx-config';
-import { getMounts } from '../config';
+import { getMounts, normalize } from '../config';
 import { loadXlsxConfig } from './fs';
 
 // 会话管理（内存存储，带过期时间）
@@ -108,12 +108,15 @@ export async function handleGetConfig(c: Context<{ Bindings: Env }>) {
     return c.json({ error: '缺少path参数' }, 400);
   }
   
+  // 规范化路径，防止路径遍历攻击
+  const normalizedPath = normalize(path);
+  
   // 从xlsx配置中获取
-  const password = xlsxConfig.getPassword(path);
-  const hidden = xlsxConfig.isHidden(path);
+  const password = xlsxConfig.getPassword(normalizedPath);
+  const hidden = xlsxConfig.isHidden(normalizedPath);
   
   return c.json({
-    path,
+    path: normalizedPath,
     password: password?.password || '',
     hint: password?.hint || '',
     hidden
@@ -184,7 +187,8 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
         errors.push(`${target}: 未找到匹配的存储`);
         continue;
       }
-      const xlsxPath = configPath === '/' ? '/.elist.xlsx' : configPath + '/.elist.xlsx';
+      // driver 的 root 已经是 configPath，所以只需传相对路径
+      const xlsxPath = '/.elist.xlsx';
       await driver.writeBinary(xlsxPath, content);
       xlsxConfig.clearDirty();
       return c.json({ success: true, savedTo: target });

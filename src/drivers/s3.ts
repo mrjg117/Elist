@@ -16,13 +16,22 @@ function encodeS3Key(key: string): string {
   return key.split('/').map(rfc3986).join('/');
 }
 
-/** 构建 RFC3986 编码的 query string（空格→%20，非 +）。 */
+/** 构建 S3 请求的 query string（RFC3986 编码） */
 function buildCanonicalQuery(params: Record<string, string>): string {
   return Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== '')
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`)
     .join('&');
+}
+
+/** 将 URLSearchParams 转换为普通对象 */
+function paramsToObj(params: URLSearchParams): Record<string, string> {
+  const obj: Record<string, string> = {};
+  params.forEach((value, key) => {
+    obj[key] = value;
+  });
+  return obj;
 }
 
 /**

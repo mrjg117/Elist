@@ -186,4 +186,4 @@ Azure 门户显示的证书指纹（如 `7D0EB3709B555837A7C533D87B74EA47A927752
 2. 配置 `CONF_PW` 环境变量（可选，用于加密配置文件）
 3. 通过管理界面或直接编辑 xlsx 文件配置密码和隐藏
 
-详见 [配置管理文档](./config-management.md)。
+详见 [README 配置说明](../README.md#配置文件elistxlsx)。

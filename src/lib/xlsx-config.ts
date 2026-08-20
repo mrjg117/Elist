@@ -17,7 +17,7 @@
  *     | key | value |
  */
 
-import XlsxPopulate from 'xlsx-populate';
+import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
 import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
 
 /** 内存中的配置数据 */
@@ -39,60 +39,61 @@ const data: ConfigData = {
 
 /** 从 xlsx 二进制数据解析配置（支持加密） */
 export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
-  let workbook;
+  let xlsxBuffer = buffer;
 
   // 如果提供了密码，先解密
   if (password) {
     try {
       const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
-      workbook = await XlsxPopulate.fromDataAsync(decrypted);
+      xlsxBuffer = decrypted.buffer as ArrayBuffer;
     } catch (e) {
-      // 解密失败，尝试作为未加密文件读取
-      workbook = await XlsxPopulate.fromDataAsync(buffer);
+      // 解密失败，使用原始 buffer
+      xlsxBuffer = buffer;
     }
-  } else {
-    workbook = await XlsxPopulate.fromDataAsync(buffer);
   }
 
+  // 使用最小化模块解析
+  const sheets = await parseXlsxMinimal(xlsxBuffer);
+
   // Sheet1: passwords
-  const pwSheet = workbook.sheet('passwords');
+  const pwSheet = sheets.get('passwords');
   if (pwSheet) {
     data.passwords.clear();
-    let row = 2;
-    while (true) {
-      const path = pwSheet.cell(`A${row}`).value();
-      const pwd = pwSheet.cell(`B${row}`).value();
-      if (path === undefined || path === null || pwd === undefined || pwd === null) break;
-      const hint = pwSheet.cell(`C${row}`).value();
-      data.passwords.set(String(path), { password: String(pwd), hint: hint ? String(hint) : undefined });
-      row++;
+    for (let i = 1; i < pwSheet.length; i++) {
+      const row = pwSheet[i];
+      if (!row || row.length < 2) continue;
+      const path = row[0];
+      const pwd = row[1];
+      if (!path || !pwd) continue;
+      const hint = row[2];
+      data.passwords.set(path, { password: pwd, hint: hint || undefined });
     }
   }
 
   // Sheet2: hidden
-  const hiddenSheet = workbook.sheet('hidden');
+  const hiddenSheet = sheets.get('hidden');
   if (hiddenSheet) {
     data.hidden.clear();
-    let row = 2;
-    while (true) {
-      const path = hiddenSheet.cell(`A${row}`).value();
-      if (path === undefined || path === null) break;
-      data.hidden.add(String(path));
-      row++;
+    for (let i = 1; i < hiddenSheet.length; i++) {
+      const row = hiddenSheet[i];
+      if (!row || row.length < 1) continue;
+      const path = row[0];
+      if (!path) continue;
+      data.hidden.add(path);
     }
   }
 
   // Sheet3: config
-  const configSheet = workbook.sheet('config');
+  const configSheet = sheets.get('config');
   if (configSheet) {
     data.config.clear();
-    let row = 2;
-    while (true) {
-      const key = configSheet.cell(`A${row}`).value();
-      const value = configSheet.cell(`B${row}`).value();
-      if (key === undefined || key === null) break;
-      data.config.set(String(key), value !== undefined && value !== null ? String(value) : '');
-      row++;
+    for (let i = 1; i < configSheet.length; i++) {
+      const row = configSheet[i];
+      if (!row || row.length < 1) continue;
+      const key = row[0];
+      if (!key) continue;
+      const value = row[1] || '';
+      data.config.set(key, value);
     }
   }
 
@@ -102,44 +103,32 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
 
 /** 将内存配置生成 xlsx 二进制（支持加密） */
 export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
-  const workbook = await XlsxPopulate.fromBlankAsync();
+  // 构建 sheets 数据
+  const sheets = new Map<string, string[][]>();
 
   // Sheet1: passwords
-  const pwSheet = workbook.sheet('Sheet1') || workbook.addSheet('passwords');
-  pwSheet.name('passwords');
-  pwSheet.cell('A1').value('path');
-  pwSheet.cell('B1').value('password');
-  pwSheet.cell('C1').value('hint');
-  let row = 2;
+  const pwRows: string[][] = [['path', 'password', 'hint']];
   for (const [path, { password: pwd, hint }] of data.passwords.entries()) {
-    pwSheet.cell(`A${row}`).value(path);
-    pwSheet.cell(`B${row}`).value(pwd);
-    pwSheet.cell(`C${row}`).value(hint || '');
-    row++;
+    pwRows.push([path, pwd, hint || '']);
   }
+  sheets.set('passwords', pwRows);
 
   // Sheet2: hidden
-  const hiddenSheet = workbook.addSheet('hidden');
-  hiddenSheet.cell('A1').value('path');
-  row = 2;
+  const hiddenRows: string[][] = [['path']];
   for (const path of data.hidden) {
-    hiddenSheet.cell(`A${row}`).value(path);
-    row++;
+    hiddenRows.push([path]);
   }
+  sheets.set('hidden', hiddenRows);
 
   // Sheet3: config
-  const configSheet = workbook.addSheet('config');
-  configSheet.cell('A1').value('key');
-  configSheet.cell('B1').value('value');
-  row = 2;
+  const configRows: string[][] = [['key', 'value']];
   for (const [key, value] of data.config.entries()) {
-    configSheet.cell(`A${row}`).value(key);
-    configSheet.cell(`B${row}`).value(value);
-    row++;
+    configRows.push([key, value]);
   }
+  sheets.set('config', configRows);
 
   // 生成 xlsx 文件
-  const xlsxBuffer = await workbook.outputAsync();
+  const xlsxBuffer = await generateXlsxMinimal(sheets);
 
   // 如果提供了密码，加密
   if (password) {
@@ -147,7 +136,7 @@ export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
     return encrypted.buffer as ArrayBuffer;
   }
 
-  return xlsxBuffer as ArrayBuffer;
+  return xlsxBuffer;
 }
 
 /** 检查是否已加载 */

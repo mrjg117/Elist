@@ -195,8 +195,8 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     const parentAp = lastSlash > 0 ? targetAp.substring(0, lastSlash) : '/';
     const newName = targetAp.substring(lastSlash + 1);
     
-    // 获取父目录的 driveItem ID
-    const parentItem = await this.graphGet(this.itemAddr(parentAp), 'id');
+    // 获取父目录的 driveItem ID 和 driveId
+    const parentItem = await this.graphGet(this.itemAddr(parentAp), 'id,parentReference');
     
     // 移动/重命名
     const r = await fetch(this.itemAddr(sourceAp), {

@@ -39,13 +39,14 @@ export function buildPropfind(
   baseUrl: string,
   selfPath: string,
   entries: Entry[],
-  includeSelf = true
+  includeSelf = true,
+  selfIsDir = true
 ): string {
   const selfHref = baseUrl + (selfPath === '/' ? '/' : selfPath);
   const selfEntry: Entry = {
     name: selfPath === '/' ? '/' : selfPath.split('/').pop() || '/',
     path: selfPath,
-    isDir: true,
+    isDir: selfIsDir,
   };
   const parts: string[] = [];
   if (includeSelf) parts.push(propstat(selfEntry, selfHref));

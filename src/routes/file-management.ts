@@ -86,15 +86,22 @@ app.post('/move', async (c) => {
     }
     
     // 获取驱动并移动
-    const { driver, rest: sourceRest } = await dispatch(c.env, sourcePath);
+    const { driver, rest: sourceRest, mount } = await dispatch(c.env, sourcePath);
     if (!driver.move) {
       return c.json({ error: '该存储不支持移动操作' }, 501);
     }
     
-    // 计算目标路径的 rest
-    const targetMount = getMounts(c.env).find(m => targetPath.startsWith(m.mount));
+    // 计算目标路径的 rest（添加守卫防止前缀冲突）
+    const targetMount = getMounts(c.env).find(m => 
+      targetPath === m.mount || targetPath.startsWith(m.mount + '/')
+    );
     if (!targetMount) {
       return c.json({ error: '目标路径不在任何挂载点内' }, 400);
+    }
+    
+    // 检查是否跨挂载
+    if (targetMount.mount !== mount.mount) {
+      return c.json({ error: '不支持跨挂载点移动' }, 400);
     }
     
     const targetRest = targetPath.slice(targetMount.mount.length) || '/';

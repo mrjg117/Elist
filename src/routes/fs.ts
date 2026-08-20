@@ -76,6 +76,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
   const configPath = c.env.CONFIG_PATH || '/';
   const configAuth = c.env.CONFIG_AUTH;
   const accounts = getAllAuthAccounts(c.env);
+  let hasError = false;
 
   // 优先检测 CONFIG_AUTH 指定的账号
   if (configAuth) {
@@ -100,44 +101,56 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
             await xlsxConfig.parseXlsx(content, xlsxPassword);
             return;
           }
+          // 文件不存在，继续尝试其他账号
         }
       } catch (e) {
-        // 读取失败，继续尝试其他账号
+        // 读取失败（网络/权限等），记录错误但不继续遍历
+        // 因为 CONFIG_AUTH 明确指定了账号，其他账号的配置可能不适用
+        hasError = true;
+        console.error('Failed to load config from CONFIG_AUTH account:', e);
       }
     }
   }
 
-  // 遍历其他存储账号，尝试读取 .elist.xlsx
-  for (const account of accounts) {
-    if (configAuth && account.name === configAuth) continue; // 已尝试过
-    try {
-      const { getDriverClass } = await import('../drivers/registry');
-      const DriverClass = getDriverClass(account.type);
-      if (!DriverClass) continue;
+  // 如果没有指定 CONFIG_AUTH 或指定账号没有配置文件，遍历其他账号
+  if (!configAuth || !hasError) {
+    for (const account of accounts) {
+      if (configAuth && account.name === configAuth) continue; // 已尝试过
+      try {
+        const { getDriverClass } = await import('../drivers/registry');
+        const DriverClass = getDriverClass(account.type);
+        if (!DriverClass) continue;
 
-      const driver = new DriverClass();
-      await driver.init({
-        mount: '/',
-        root: configPath,
-        driver: account.type,
-        addition: account.auth,
-      }, c.env);
+        const driver = new DriverClass();
+        await driver.init({
+          mount: '/',
+          root: configPath,
+          driver: account.type,
+          addition: account.auth,
+        }, c.env);
 
-      const xlsxPath = '/.elist.xlsx';
-      const content = await driver.readBinary(xlsxPath);
-      if (content) {
-        const xlsxPassword = c.env.CONF_PW;
-        await xlsxConfig.parseXlsx(content, xlsxPassword);
-        return;
+        const xlsxPath = '/.elist.xlsx';
+        const content = await driver.readBinary(xlsxPath);
+        if (content) {
+          const xlsxPassword = c.env.CONF_PW;
+          await xlsxConfig.parseXlsx(content, xlsxPassword);
+          return;
+        }
+      } catch (e) {
+        // 读取失败，记录但继续尝试下一个
+        hasError = true;
+        console.error('Failed to load config from account:', account.name, e);
+        continue;
       }
-    } catch (e) {
-      // 读取失败，尝试下一个存储
-      continue;
     }
   }
   
-  // 没有找到 .elist.xlsx，标记为已加载（空配置）
-  xlsxConfig.markLoaded();
+  // 没有找到 .elist.xlsx
+  // 如果有错误发生，不标记为已加载（保持安全状态）
+  // 否则标记为已加载（空配置）
+  if (!hasError) {
+    xlsxConfig.markLoaded();
+  }
 }
 
 /** 获取配置文件存放的存储位置（根据 CONFIG_AUTH 环境变量） */

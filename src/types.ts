@@ -4,7 +4,7 @@
  * 配置架构（v4，变量拆分）：
  *   - AUTH_<NAME>：账号机密（type、凭据等）
  *   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
- *   - ACL_KEY：xlsx 配置文件密码（可选）
+ *   - CONF_PW：xlsx 配置文件密码（可选）
  *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
  *
  * 设计要点：所有存储后端（S3 / OneDrive / 未来 GDrive）实现同一 Driver 接口，

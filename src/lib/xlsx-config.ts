@@ -17,7 +17,7 @@
  *     | key | value |
  */
 
-import XlsxPopulate from 'excelents';
+import XlsxPopulate from 'xlsx-populate';
 import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
 
 /** 内存中的配置数据 */

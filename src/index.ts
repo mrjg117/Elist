@@ -28,8 +28,30 @@ app.get('/api/list', handleList);
 app.get('/api/link', handleLink);
 app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
-app.post('/api/config/save', handleConfigSave);
-app.post('/api/config/clear', handleConfigClear);
+app.post('/api/config/save', async (c) => {
+  // 需要管理员鉴权
+  const adminPassword = c.req.header('X-Admin-Password');
+  if (!adminPassword) {
+    return c.json({ error: '需要管理员密码' }, 401);
+  }
+  const expectedPassword = (await import('./lib/xlsx-config')).getConfig('admin_password');
+  if (!expectedPassword || expectedPassword !== adminPassword) {
+    return c.json({ error: '管理员密码错误' }, 403);
+  }
+  return handleConfigSave(c);
+});
+app.post('/api/config/clear', async (c) => {
+  // 需要管理员鉴权
+  const adminPassword = c.req.header('X-Admin-Password');
+  if (!adminPassword) {
+    return c.json({ error: '需要管理员密码' }, 401);
+  }
+  const expectedPassword = (await import('./lib/xlsx-config')).getConfig('admin_password');
+  if (!expectedPassword || expectedPassword !== adminPassword) {
+    return c.json({ error: '管理员密码错误' }, 403);
+  }
+  return handleConfigClear(c);
+});
 
 // 管理员API
 app.post('/api/admin/login', handleLogin);

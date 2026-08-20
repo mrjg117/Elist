@@ -158,7 +158,7 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
 
 // 获取配置存储的 driver
 async function getConfigDriver(env: Env, target: string, configPath: string): Promise<any | null> {
-  const { getAllAuthAccounts } = await import('../lib/dispatch');
+  const { getAllAuthAccounts } = await import('./fs');
   const { getDriverClass } = await import('../drivers/registry');
   
   const accounts = getAllAuthAccounts(env);

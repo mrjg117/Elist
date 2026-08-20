@@ -37,7 +37,8 @@ export class OneDriveDriver extends BaseDriver implements Driver {
     this.thumbprint = a.cert_thumbprint || '';
     this.certPem = a.cert_pem || '';
     this.certKeyPem = a.cert_key || '';
-    this.userId = a.user_id || '';
+    // user_id 在 mount 顶层，不在 addition 里
+    this.userId = mount.user_id || '';
     if (!this.userId) throw new Error('onedrive app-only requires user_id (UPN or objectId)');
     this.key = mount.mount + (mount.root || '');
   }

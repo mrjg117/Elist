@@ -313,7 +313,16 @@ export class S3Driver extends BaseDriver implements Driver {
 
 function decode(s: string): string {
   try {
-    return decodeURIComponent(s.replace(/\+/g, ' '));
+    // 先反转义 XML 实体，再解码 URL 编码
+    const unescaped = s
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
+    return decodeURIComponent(unescaped);
   } catch {
     return s;
   }

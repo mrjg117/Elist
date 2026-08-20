@@ -1,6 +1,7 @@
 name = "elist"
 main = "./src/index.ts"
 compatibility_date = "2025-04-04"
+compatibility_flags = ["nodejs_compat"]
 # 部署/自动部署时保留配置外的既有变量与密钥（如 Dashboard 里设的 AUTH_* secret），
 # 防止 Git 集成每次 push 自动部署把手工设的密钥清掉。
 keep_vars = true

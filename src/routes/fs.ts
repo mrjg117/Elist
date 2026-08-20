@@ -70,7 +70,7 @@ export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string
 }
 
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
-async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
+export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
   if (xlsxConfig.isLoaded() && !fresh) return;
 
   const configPath = c.env.CONFIG_PATH || '/';
@@ -272,10 +272,15 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 确保配置已加载（防止冷启动绕过门禁）
+  await loadXlsxConfig(c, fresh);
+
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
+  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -291,10 +296,15 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 确保配置已加载（防止冷启动绕过门禁）
+  await loadXlsxConfig(c, fresh);
+
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
+  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);

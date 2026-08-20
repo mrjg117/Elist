@@ -4,6 +4,7 @@ import { dispatch } from '../lib/dispatch';
 import { checkPathPassword } from '../lib/acl';
 import { getMounts } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
+import { loadXlsxConfig } from './fs';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -34,6 +35,9 @@ app.post('/write-text', async (c) => {
   if (adminError) return adminError;
   
   try {
+    // 确保配置已加载（防止冷启动绕过门禁）
+    await loadXlsxConfig(c, false);
+    
     const { path, content } = await c.req.json();
     if (!path || content === undefined) {
       return c.json({ error: '缺少 path 或 content 参数' }, 400);
@@ -66,6 +70,9 @@ app.post('/move', async (c) => {
   if (adminError) return adminError;
   
   try {
+    // 确保配置已加载（防止冷启动绕过门禁）
+    await loadXlsxConfig(c, false);
+    
     const { sourcePath, targetPath } = await c.req.json();
     if (!sourcePath || !targetPath) {
       return c.json({ error: '缺少 sourcePath 或 targetPath 参数' }, 400);
@@ -106,6 +113,9 @@ app.post('/delete', async (c) => {
   if (adminError) return adminError;
   
   try {
+    // 确保配置已加载（防止冷启动绕过门禁）
+    await loadXlsxConfig(c, false);
+    
     const { path } = await c.req.json();
     if (!path) {
       return c.json({ error: '缺少 path 参数' }, 400);
@@ -138,6 +148,9 @@ app.post('/mkdir', async (c) => {
   if (adminError) return adminError;
   
   try {
+    // 确保配置已加载（防止冷启动绕过门禁）
+    await loadXlsxConfig(c, false);
+    
     const { path } = await c.req.json();
     if (!path) {
       return c.json({ error: '缺少 path 参数' }, 400);

@@ -41,10 +41,11 @@ export function buildPropfind(
   selfPath: string,
   entries: Entry[],
   includeSelf = true,
-  selfIsDir = true
+  selfIsDir = true,
+  selfEntryOverride?: Entry | null
 ): string {
   const selfHref = baseUrl + (selfPath === '/' ? '/' : selfPath);
-  const selfEntry: Entry = {
+  const selfEntry: Entry = selfEntryOverride || {
     name: selfPath === '/' ? '/' : selfPath.split('/').pop() || '/',
     path: selfPath,
     isDir: selfIsDir,

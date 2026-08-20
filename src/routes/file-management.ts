@@ -77,7 +77,7 @@ app.post('/move', async (c) => {
     
     // 计算目标路径的 rest（添加守卫防止前缀冲突）
     const targetMount = getMounts(c.env).find(m => 
-      targetPath === m.mount || targetPath.startsWith(m.mount + '/')
+      m.mount === '/' || targetPath === m.mount || targetPath.startsWith(m.mount + '/')
     );
     if (!targetMount) {
       return c.json({ error: '目标路径不在任何挂载点内' }, 400);
@@ -112,8 +112,8 @@ app.post('/delete', async (c) => {
       return c.json({ error: '缺少 path 参数' }, 400);
     }
     
-    // 检查路径密码
-    const pws = c.req.header('X-Folder-Password')?.split(',') || [];
+    // 检查路径密码（trim 每个密码）
+    const pws = (c.req.header('X-Folder-Password')?.split(',') || []).map(p => p.trim()).filter(p => p);
     const gate = await checkPathPassword(path, pws);
     if (!gate.ok) {
       return c.json({ error: '需要目录密码', path: gate.lockedAt }, 403);

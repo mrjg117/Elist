@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { getMounts, normalize } from '../config';
 import { loadXlsxConfig } from './fs';
+import { constantTimeCompare } from '../lib/acl';
 
 // 会话管理（内存存储，带过期时间）
 interface Session {
@@ -69,7 +70,7 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
     return c.json({ error: '管理员密码未配置' }, 500);
   }
   
-  if (password !== adminPassword) {
+  if (!constantTimeCompare(password, adminPassword)) {
     return c.json({ error: '密码错误' }, 401);
   }
   

@@ -211,7 +211,7 @@ export async function probeEvents(graph: GraphCall) {
 }
 
 export async function probeProfile(graph: GraphCall) {
-  await graph('GET', '/');
+  await graph('GET', '');
   return '用户档案 (只读)';
 }
 

@@ -22,6 +22,7 @@ interface CacheVal {
 const listingCache = new Map<string, CacheVal>();
 
 const TTL_MS = 10 * 60 * 1000; // 10 分钟
+const MAX_CACHE_SIZE = 1000; // 最多缓存 1000 个目录
 
 export function getListing(key: string): Entry[] | null {
   const v = listingCache.get(key);
@@ -30,10 +31,28 @@ export function getListing(key: string): Entry[] | null {
     listingCache.delete(key);
     return null;
   }
+  // LRU: 访问时更新位置（删除后重新插入）
+  listingCache.delete(key);
+  listingCache.set(key, v);
   return v.entries;
 }
 
 export function setListing(key: string, entries: Entry[]): void {
+  // 如果已存在，先删除（更新位置）
+  if (listingCache.has(key)) {
+    listingCache.delete(key);
+  }
+  
+  // 如果缓存已满，删除最旧的条目（Map 的第一个）
+  while (listingCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = listingCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      listingCache.delete(oldestKey);
+    } else {
+      break;
+    }
+  }
+  
   listingCache.set(key, { entries, expireAt: Date.now() + TTL_MS });
 }
 

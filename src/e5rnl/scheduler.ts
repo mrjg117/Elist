@@ -135,9 +135,10 @@ export async function runRenewalForAccount(
     return results;
   }
 
-  // 续期账号：尽量跑满预算
-  while (apiCalls < budget && Date.now() - startTime < maxRuntimeMs) {
-    const remaining = budget - apiCalls;
+  // 续期账号：尽量跑满预算（确保至少为1，避免负数预算导致无法执行）
+  const effectiveBudget = Math.max(1, budget);
+  while (apiCalls < effectiveBudget && Date.now() - startTime < maxRuntimeMs) {
+    const remaining = effectiveBudget - apiCalls;
     const batchSize = Math.min(concurrency, remaining);
     if (batchSize <= 0) break;
 

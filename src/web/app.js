@@ -30,6 +30,12 @@ function esc(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// JS 上下文转义（用于 onclick 等属性内的 JS 字符串）
+// HTML 解析会把 &#39; 还原成 '，所以 JS 字符串要用反斜杠转义
+function jsEsc(s) {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+}
+
 // 客户端已知密码集合：进入受保护层级时弹窗收集，存入 Set。
 // 每个请求把集合内所有密码以重复 X-Folder-Password 头带上，后端逐层校验
 // （父目录 + 子目录各有密码配置时，需两层密码都满足 = 子层重新鉴权）。
@@ -216,8 +222,8 @@ async function previewImage(url, name) {
       <button onclick="rotateImage(90)">旋转</button>
       <button onclick="resetImage()">重置</button>
       <button onclick="toggleFullscreen()">全屏</button>
-      <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
-      <button onclick="showQRCode('${esc(url)}')">二维码</button>
+      <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
+      <button onclick="showQRCode('${jsEsc(url)}')">二维码</button>
     </div>
   `;
   
@@ -388,7 +394,7 @@ async function preview(path, name, entry = null) {
     inner = `
       <div class="preview-controls">
         <button onclick="toggleFullscreen()">全屏</button>
-        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
       </div>
       <video src="${url}" controls autoplay style="max-width:100%;max-height:80vh"></video>
     `;
@@ -397,7 +403,7 @@ async function preview(path, name, entry = null) {
   else if (/\.(mp3|wav|ogg|m4a)$/.test(lower)) {
     inner = `
       <div class="preview-controls">
-        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
       </div>
       <audio src="${url}" controls autoplay style="width:100%"></audio>
     `;
@@ -407,7 +413,7 @@ async function preview(path, name, entry = null) {
     inner = `
       <div class="preview-controls">
         <button onclick="toggleFullscreen()">全屏</button>
-        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
       </div>
       <iframe src="${url}" style="width:100%;height:80vh;border:none"></iframe>
     `;
@@ -429,7 +435,7 @@ async function preview(path, name, entry = null) {
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
           <button onclick="toggleRaw()">原始文本</button>
         </div>
         <div id="mdRendered" class="markdown-body">${html}</div>
@@ -450,7 +456,7 @@ async function preview(path, name, entry = null) {
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
           <button onclick="toggleJSON()">折叠/展开</button>
         </div>
         <div class="json-viewer" style="max-height:70vh;overflow:auto">
@@ -494,7 +500,7 @@ async function preview(path, name, entry = null) {
         
         inner = `
           <div class="preview-controls">
-            <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+            <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
           </div>
           <div style="max-height:70vh;overflow:auto">${table}</div>
         `;
@@ -516,7 +522,7 @@ async function preview(path, name, entry = null) {
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
         </div>
         <div style="max-height:70vh;overflow:auto">
           <pre>${esc(formatted)}</pre>
@@ -538,7 +544,7 @@ async function preview(path, name, entry = null) {
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
         </div>
         <div style="max-height:70vh;overflow:auto">
           <pre>${esc(formatted)}</pre>
@@ -598,7 +604,7 @@ async function preview(path, name, entry = null) {
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
         </div>
         <pre style="max-height:70vh;overflow:auto"><code class="language-${lang}">${highlighted}</code></pre>
       `;
@@ -624,15 +630,15 @@ async function preview(path, name, entry = null) {
         fileList += `<li>
           <span>${esc(path)}</span>
           <span style="color:var(--muted);font-size:12px">${fmtSize(size)}</span>
-          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="extractZipFile('${esc(path)}', '${esc(url)}')">预览</button>
-          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="downloadZipFile('${esc(path)}', '${esc(url)}')">下载</button>
+          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="extractZipFile('${jsEsc(path)}', '${jsEsc(url)}')">预览</button>
+          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="downloadZipFile('${jsEsc(path)}', '${jsEsc(url)}')">下载</button>
         </li>`;
       }
       fileList += '</ul></div>';
       
       inner = `
         <div class="preview-controls">
-          <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
         </div>
         ${fileList}
       `;
@@ -645,7 +651,7 @@ async function preview(path, name, entry = null) {
   else if (/\.(ttf|otf|woff|woff2)$/.test(lower)) {
     inner = `
       <div class="preview-controls">
-        <button onclick="copyShareLink('${esc(url)}')">复制链接</button>
+        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
       </div>
       <div style="text-align:center;padding:40px">
         <div style="font-size:48px;font-family:CustomFont">AaBbCcDdEeFfGg</div>
@@ -664,7 +670,7 @@ async function preview(path, name, entry = null) {
   if (entry) {
     inner = `
       <div class="preview-controls" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px">
-        <button onclick="showFileInfo('${esc(path)}', '${esc(name)}', ${entry.size || 0}, '${esc(entry.mime || '')}')">文件信息</button>
+        <button onclick="showFileInfo('${jsEsc(path)}', '${jsEsc(name)}', ${entry.size || 0}, '${jsEsc(entry.mime || '')}')">文件信息</button>
       </div>
       ${inner}
     `;
@@ -798,7 +804,7 @@ function renderCrumbs() {
   for (const p of parts) {
     acc += '/' + p;
     const pp = acc;
-    segs.push(`<span onclick="openPath('${esc(pp)}')">${esc(p)}</span>`);
+    segs.push(`<span onclick="openPath('${jsEsc(pp)}')">${esc(p)}</span>`);
   }
   document.getElementById('crumbs').innerHTML = segs.join(' / ');
 }
@@ -842,7 +848,7 @@ async function renderTree() {
     if (children && children.length > 0) {
       for (const child of children) {
         const isCurrentPath = child.path === acc;
-        html += `<div class="tree-item${isCurrentPath ? ' active' : ''}" style="margin-left:${(i + 1) * 16}px" onclick="openPath('${esc(child.path)}')">📁 ${esc(child.name)}</div>`;
+        html += `<div class="tree-item${isCurrentPath ? ' active' : ''}" style="margin-left:${(i + 1) * 16}px" onclick="openPath('${jsEsc(child.path)}')">📁 ${esc(child.name)}</div>`;
       }
     }
   }

@@ -184,7 +184,8 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
         errors.push(`${target}: 未找到匹配的存储`);
         continue;
       }
-      const xlsxPath = configPath === '/' ? '/.elist.xlsx' : configPath + '/.elist.xlsx';
+      // driver 的 root 已经是 configPath，所以只需传相对路径
+      const xlsxPath = '/.elist.xlsx';
       await driver.writeBinary(xlsxPath, content);
       xlsxConfig.clearDirty();
       return c.json({ success: true, savedTo: target });

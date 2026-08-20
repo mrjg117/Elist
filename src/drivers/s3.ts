@@ -4,11 +4,25 @@ import { sha256Hex, hmacRaw, hmacHex, bufToHex } from '../lib/crypto';
 
 const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-/** URLSearchParams -> 普通对象（兼容该 TS lib 不认 URLSearchParams 可迭代）。 */
-function paramsToObj(q: URLSearchParams): Record<string, string> {
-  const o: Record<string, string> = {};
-  q.forEach((v, k) => (o[k] = v));
-  return o;
+/** RFC3986 编码（空格→%20），用于 S3 URL 路径和 query。 */
+function rfc3986(s: string): string {
+  return encodeURIComponent(s).replace(/[!'()*]/g, c =>
+    '%' + c.charCodeAt(0).toString(16).toUpperCase()
+  );
+}
+
+/** 编码 S3 key：每个 segment 单独编码，保留 / 分隔符。 */
+function encodeS3Key(key: string): string {
+  return key.split('/').map(rfc3986).join('/');
+}
+
+/** 构建 RFC3986 编码的 query string（空格→%20，非 +）。 */
+function buildCanonicalQuery(params: Record<string, string>): string {
+  return Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`)
+    .join('&');
 }
 
 /**
@@ -51,10 +65,8 @@ export class S3Driver extends BaseDriver implements Driver {
     const amzdate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
     const datestamp = amzdate.slice(0, 8);
     const scope = `${datestamp}/${this.region}/s3/aws4_request`;
-    const qEntries = Object.entries(query).sort(([a], [b]) => a.localeCompare(b));
-    const canonicalQuery = qEntries
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join('&');
+    // 使用统一的 RFC3986 编码（空格→%20）
+    const canonicalQuery = buildCanonicalQuery(query);
     // AWS SigV4 要求所有 x-amz-* 头都必须纳入签名，按字母序排列
     const canonicalHeaders = `host:${u.host}\nx-amz-content-sha256:${bodyHash}\nx-amz-date:${amzdate}\n`;
     const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
@@ -183,7 +195,8 @@ export class S3Driver extends BaseDriver implements Driver {
 
   async writeBinary(rest: string, content: ArrayBuffer): Promise<void> {
     const key = this.toAccountPath(rest).replace(/^\//, '');
-    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const encodedKey = encodeS3Key(key);
+    const url = `${this.endpoint}/${this.bucket}/${encodedKey}`;
     const bodyHash = await sha256Hex(content);
     const headers = await this.signHeaders('PUT', url, {}, bodyHash);
     const r = await fetch(url, {
@@ -196,7 +209,8 @@ export class S3Driver extends BaseDriver implements Driver {
 
   async writeText(rest: string, content: string): Promise<void> {
     const key = this.toAccountPath(rest).replace(/^\//, '');
-    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const encodedKey = encodeS3Key(key);
+    const url = `${this.endpoint}/${this.bucket}/${encodedKey}`;
     const encoder = new TextEncoder();
     const body = encoder.encode(content).buffer;
     const bodyHash = await sha256Hex(body);
@@ -214,19 +228,19 @@ export class S3Driver extends BaseDriver implements Driver {
     // 如果是目录，需要递归处理所有子对象
     const sourceKey = this.toAccountPath(sourceRest).replace(/^\//, '');
     const targetKey = this.toAccountPath(targetRest).replace(/^\//, '');
-    
+
     // 先尝试作为单个对象移动
-    const copyUrl = `${this.endpoint}/${this.bucket}/${targetKey}`;
+    const copyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(targetKey)}`;
     const copyHeaders = await this.signHeaders('PUT', copyUrl, {}, EMPTY_SHA256);
-    copyHeaders['x-amz-copy-source'] = `/${this.bucket}/${sourceKey}`;
+    copyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(sourceKey)}`;
     const copyResp = await fetch(copyUrl, {
       method: 'PUT',
       headers: copyHeaders,
     });
-    
+
     if (copyResp.ok) {
       // 单个对象移动成功，删除源
-      const deleteUrl = `${this.endpoint}/${this.bucket}/${sourceKey}`;
+      const deleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(sourceKey)}`;
       const deleteHeaders = await this.signHeaders('DELETE', deleteUrl, {}, EMPTY_SHA256);
       const deleteResp = await fetch(deleteUrl, {
         method: 'DELETE',
@@ -237,11 +251,11 @@ export class S3Driver extends BaseDriver implements Driver {
       // 可能是目录，需要递归处理
       const sourcePrefix = sourceKey.endsWith('/') ? sourceKey : sourceKey + '/';
       const targetPrefix = targetKey.endsWith('/') ? targetKey : targetKey + '/';
-      
+
       // 分页列出所有以 sourcePrefix 开头的对象
       const keys: string[] = [];
       let continuationToken: string | undefined;
-      
+
       do {
         const q = new URLSearchParams({
           'list-type': '2',
@@ -254,40 +268,40 @@ export class S3Driver extends BaseDriver implements Driver {
         const listHeaders = await this.signHeaders('GET', listUrl, paramsToObj(q), EMPTY_SHA256);
         const listResp = await fetch(listUrl, { headers: listHeaders });
         if (!listResp.ok) throw new Error(`S3 list failed: ${listResp.status}`);
-        
+
         const xml = await listResp.text();
         const keyRe = /<Key>([\s\S]*?)<\/Key>/g;
         let m: RegExpExecArray | null;
         while ((m = keyRe.exec(xml))) {
           keys.push(decode(m[1]));
         }
-        
+
         // 检查是否有更多结果
         const truncatedMatch = xml.match(/<IsTruncated>([\s\S]*?)<\/IsTruncated>/);
         const isTruncated = truncatedMatch && truncatedMatch[1].toLowerCase() === 'true';
         const tokenMatch = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/);
         continuationToken = tokenMatch ? tokenMatch[1] : undefined;
-        
+
         if (!isTruncated || !continuationToken) break;
       } while (true);
-      
+
       if (keys.length === 0) {
         throw new Error(`S3 move failed: source not found`);
       }
-      
+
       // 递归复制和删除
       for (const key of keys) {
         const newKey = targetPrefix + key.slice(sourcePrefix.length);
-        const newCopyUrl = `${this.endpoint}/${this.bucket}/${newKey}`;
+        const newCopyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(newKey)}`;
         const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
-        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeURIComponent(key).replace(/%2F/g, '/')}`;
+        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(key)}`;
         const newCopyResp = await fetch(newCopyUrl, {
           method: 'PUT',
           headers: newCopyHeaders,
         });
         if (!newCopyResp.ok) throw new Error(`S3 copy failed: ${newCopyResp.status}`);
-        
-        const newDeleteUrl = `${this.endpoint}/${this.bucket}/${key}`;
+
+        const newDeleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
         const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
         const newDeleteResp = await fetch(newDeleteUrl, {
           method: 'DELETE',
@@ -302,7 +316,7 @@ export class S3Driver extends BaseDriver implements Driver {
 
   async delete(rest: string): Promise<void> {
     const key = this.toAccountPath(rest).replace(/^\//, '');
-    const url = `${this.endpoint}/${this.bucket}/${key}`;
+    const url = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
     const headers = await this.signHeaders('DELETE', url, {}, EMPTY_SHA256);
     const r = await fetch(url, {
       method: 'DELETE',
@@ -315,7 +329,7 @@ export class S3Driver extends BaseDriver implements Driver {
     // S3 没有真正的目录，创建空对象作为目录标记
     const key = this.toAccountPath(rest).replace(/^\//, '');
     const dirKey = key.endsWith('/') ? key : key + '/';
-    const url = `${this.endpoint}/${this.bucket}/${dirKey}`;
+    const url = `${this.endpoint}/${this.bucket}/${encodeS3Key(dirKey)}`;
     const headers = await this.signHeaders('PUT', url, {}, EMPTY_SHA256);
     const r = await fetch(url, {
       method: 'PUT',

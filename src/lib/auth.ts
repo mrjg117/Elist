@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types';
 import * as xlsxConfig from './xlsx-config';
 import { loadXlsxConfig } from '../routes/fs';
+import { constantTimeCompare } from './acl';
 
 /**
  * 管理员鉴权中间件。
@@ -29,7 +30,7 @@ export async function requireAdmin(c: Context<{ Bindings: Env }>): Promise<any |
 
   // 从 xlsx 配置获取管理员密码
   const expectedPassword = xlsxConfig.getConfig('admin_password');
-  if (!expectedPassword || expectedPassword !== adminPassword) {
+  if (!expectedPassword || !constantTimeCompare(adminPassword, expectedPassword)) {
     return c.json({ error: '管理员密码错误' }, 403);
   }
 

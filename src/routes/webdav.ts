@@ -4,6 +4,7 @@ import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
 import { getMounts } from '../config';
+import * as xlsxConfig from '../lib/xlsx-config';
 
 /**
  * WebDAV handler（挂载在 /dav/*）。
@@ -27,7 +28,10 @@ function toRest(fullPath: string, mount: Mount): string {
 function collectPws(c: Context<{ Bindings: Env }>): string[] {
   const out: string[] = [];
   c.req.raw.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'x-folder-password') out.push(value);
+    if (key.toLowerCase() === 'x-folder-password') {
+      // 支持逗号分隔的多个密码
+      out.push(...value.split(',').map(p => p.trim()).filter(Boolean));
+    }
   });
   // WebDAV 客户端（rclone / RaiDrive / Windows 资源管理器等）不会发 X-Folder-Password，
   // 只会发 HTTP Basic Auth。把 Basic 的「用户名 + 密码」都作为候选密码：

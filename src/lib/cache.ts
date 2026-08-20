@@ -37,38 +37,7 @@ export function setListing(key: string, entries: Entry[]): void {
   listingCache.set(key, { entries, expireAt: Date.now() + TTL_MS });
 }
 
-// ---- ACL 缓存（短 TTL）----
-// 门禁校验从 .elist.xlsx 配置读取，缓存在内存中。
-// TTL 比 listing(10m) 短（5m）：密码改动的传播延迟要更小。
-interface AclVal {
-  passwd?: string | null; // undefined = 尚未加载
-  hidden?: string | null; // undefined = 尚未加载（已废弃，保留兼容）
-  selfHidden?: boolean;   // undefined = 尚未加载
-  expireAt: number;
-}
-const aclCache = new Map<string, AclVal>();
-const ACL_TTL_MS = 5 * 60 * 1000; // 5 分钟
 
-export function getAcl(dir: string): AclVal | null {
-  const v = aclCache.get(dir);
-  if (!v) return null;
-  if (Date.now() > v.expireAt) {
-    aclCache.delete(dir);
-    return null;
-  }
-  return v;
-}
-
-/** 增量更新某目录的 ACL 缓存：只覆盖传入字段，保留另一字段（若已加载）。 */
-export function setAcl(dir: string, val: { passwd?: string | null; hidden?: string | null; selfHidden?: boolean }): void {
-  const prev = aclCache.get(dir);
-  aclCache.set(dir, {
-    passwd: val.passwd !== undefined ? val.passwd : prev?.passwd,
-    hidden: val.hidden !== undefined ? val.hidden : prev?.hidden,
-    selfHidden: val.selfHidden !== undefined ? val.selfHidden : prev?.selfHidden,
-    expireAt: Date.now() + ACL_TTL_MS,
-  });
-}
 
 /**
  * 被动搜索：仅在已浏览（惰性缓存）的目录里匹配 q（子串，大小写不敏感）。

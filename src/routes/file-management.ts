@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { checkPathPassword } from '../lib/acl';
 import { getMounts } from '../config';
+import * as xlsxConfig from '../lib/xlsx-config';
 
 const app = new Hono<{ Bindings: Env }>();
 

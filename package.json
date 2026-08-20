@@ -10,7 +10,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "excelents": "^0.0.2",
+    "xlsx-populate": "^1.21.0",
     "hono": "^4.6.0",
     "ooxml-encryption": "^1.0.0"
   },

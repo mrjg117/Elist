@@ -5,6 +5,7 @@ import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
 import { getMounts } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
+import { loadXlsxConfig } from './fs';
 
 /**
  * WebDAV handler（挂载在 /dav/*）。
@@ -74,6 +75,9 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
       'MS-Author-Via': 'DAV',
     });
   }
+
+  // 确保配置已加载（防止冷启动绕过门禁）
+  await loadXlsxConfig(c, false);
 
   const { driver, rest, mount } = await dispatch(c.env, storagePath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
@@ -164,7 +168,7 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     }
     const destUrl = new URL(destination);
     const destPath = decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/';
-    const destMount = getMounts(c.env).find(m => destPath.startsWith(m.mount));
+    const destMount = getMounts(c.env).find(m => destPath === m.mount || destPath.startsWith(m.mount + '/'));
     if (!destMount || destMount.mount !== mount.mount) {
       return c.body(null, 400); // 不支持跨挂载点移动
     }

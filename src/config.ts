@@ -83,7 +83,7 @@ export function findMount(
   let best: Mount | null = null;
   let bestLen = -1;
   for (const m of mounts) {
-    if (path === m.mount || path.startsWith(m.mount + '/')) {
+    if (path === m.mount || (m.mount === '/' ? true : path.startsWith(m.mount + '/'))) {
       if (m.mount.length > bestLen) {
         best = m;
         bestLen = m.mount.length;

@@ -50,7 +50,7 @@ function isFresh(c: Context<{ Bindings: Env }>): boolean {
 }
 
 /** 获取所有存储账号（从 AUTH_* 环境变量解析） */
-function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth: any }> {
+export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth: any }> {
   const accounts: Array<{ name: string; type: string; auth: any }> = [];
   
   for (const [key, value] of Object.entries(env)) {
@@ -70,7 +70,7 @@ function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth:
 }
 
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
-async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
+export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
   if (xlsxConfig.isLoaded() && !fresh) return;
 
   const configPath = c.env.CONFIG_PATH || '/';
@@ -272,10 +272,15 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 确保配置已加载（防止冷启动绕过门禁）
+  await loadXlsxConfig(c, fresh);
+
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
+  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -291,10 +296,15 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'path required' }, 400);
   const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  // 确保配置已加载（防止冷启动绕过门禁）
+  await loadXlsxConfig(c, fresh);
+
   const { driver, rest, mount } = await dispatch(c.env, path);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(path), pws, readText, isFresh(c));
+  const gate = await checkPathPassword(parentDir(path), pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -327,7 +337,7 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
       return c.json({ error: 'Invalid mount path' }, 400);
     }
   } else {
-    // 使用 CONFIG_MOUNT 环境变量或默认第一个挂载点
+    // 使用 CONFIG_AUTH 环境变量或默认第一个挂载点
     configMount = await getConfigMount(c);
     if (!configMount) {
       return c.json({ error: 'No mount point available for config storage' }, 500);

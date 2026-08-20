@@ -13,11 +13,11 @@
   - `onedrive`：组织租户 Azure 证书凭据（RS256 JWT 自签），无 refresh_token、免 2 年失效。
   - `s3`：S3 / R2 / OSS / COS / MinIO，手写 AWS SigV4，不引 aws-sdk。
 - **302 直链下载**：浏览器直接从源站拉文件，边缘不搬字节、天然支持 Range 多线程。
-- **WebDAV**：`/dav` 路径下提供完整 WebDAV 支持（读/写），可对接 rclone、RaiDrive 等工具。
+- **WebDAV**：`/dav` 路径下提供完整 WebDAV 支持（读/写），可对接 rclone、RaiDrive 等工具。读操作无需认证，写操作需管理员密码。
 - **配置集中化（.elist.xlsx）**：密码、隐藏目录等配置统一存放在存储根目录的 `.elist.xlsx` 文件中，支持在线编辑、可加密。
 - **管理员登录**：网页端登录后可通过界面配置各目录的密码和显隐，无需手动编辑文件。
-- **文件夹密码门禁**：支持级联鉴权，密码经请求头传递、不进 URL。
-- **隐藏目录/文件**：通过管理页面或 xlsx 配置隐藏（仅界面隐藏，硬路径仍可访问）。
+- **文件夹密码门禁**：支持级联鉴权，密码经请求头传递、不进 URL。冷启动时也会先加载配置再校验，防止绕过。
+- **隐藏目录/文件**：通过管理页面或 xlsx 配置隐藏（仅界面隐藏，硬路径仍可访问）。支持从挂载目录到文件的任意路径隐藏。
 - **URL 路由**：支持直接访问 `/path/to/file`，SPA 路由无缝跳转。
 - **左侧导航树**：可折叠的目录树，快速跳转。
 - **视图切换**：列表视图 / 网格视图，支持图片缩略图懒加载。
@@ -33,7 +33,7 @@
   - 字体文件：字形预览
 - **文件分享**：复制链接、二维码分享。
 - **被动缓存搜索**：只在用户已浏览过的目录里匹配，绝不主动全量扫描。
-- **E5 订阅续期**：Cron 触发，随机抽取 API 动作执行，多账号预算分配。
+- **E5 订阅续期**：Cron 触发，随机抽取 API 动作执行（32 个动作），多账号预算分配。
 - **存储 0 依赖**：不使用 KV / D1 / SQL；状态 = env(secret) + 存储内 `.elist.xlsx`。
 
 ---
@@ -133,6 +133,8 @@ npm run deploy
 | `cache` | string | 覆盖全局 CACHE_CONTROL（可选） |
 | `e5rnl` | boolean | 是否启用 E5 续期（可选，默认 false） |
 
+> 注意：挂载项不支持 `hide` 和 `sort` 字段。隐藏通过 `.elist.xlsx` 的 `hidden` sheet 配置，排序通过 URL 参数 `?sort=` 控制。
+
 ### 公用变量
 
 | 变量 | 说明 | 默认值 |
@@ -163,7 +165,7 @@ npm run deploy
 - `:first-s3`：自动选择第一个 S3 存储
 - 不配置：使用第一个存储账号
 
-**加载逻辑：** 首次访问时遍历所有存储账号，在 `CONFIG_PATH` 路径下查找 `.elist.xlsx`，找到第一个即加载。
+**加载逻辑：** 首次访问时优先检测 `CONFIG_AUTH` 指定的账号，找不到再遍历其他存储账号，在 `CONFIG_PATH` 路径下查找 `.elist.xlsx`，找到第一个即加载。
 
 **保存逻辑：** 优先写入 `CONFIG_AUTH` 指定位置，若失败则按顺序尝试：`:first-onedrive` → `:first-s3` → 第一个存储账号。
 
@@ -201,9 +203,14 @@ npm run deploy
 
 ```json
 {
-  "path": "/od1",
-  "root": "/",
-  "e5rnl": true
+  "user_id": "user@org.com",
+  "mounts": [
+    {
+      "path": "/od1",
+      "root": "/",
+      "e5rnl": true
+    }
+  ]
 }
 ```
 
@@ -214,7 +221,7 @@ npm run deploy
 - 提取所有 OneDrive 账号，去重
 - 预算分配：
   - 续期账号（`e5rnl: true`）：平均分配剩余预算，尽量跑满
-  - 非续期账号：只分配 2 次调用（list 刷缓存）
+  - 非续期账号：只分配 1 次调用（list 刷缓存）
 - 随机抽取 API 动作（可重复），包括读写操作
 
 ### 续期配置
@@ -254,16 +261,19 @@ npm run deploy
 
 ## WebDAV
 
-WebDAV 挂在 `/dav` 下，支持完整的读写操作：
+WebDAV 挂在 `/dav` 下，默认只读，登录后支持读写：
 
-- **读操作**：`OPTIONS / PROPFIND / GET / HEAD`（无需认证）
-- **写操作**：`PUT / MKCOL / DELETE / MOVE`（需管理员密码）
+- **读操作**：`OPTIONS / PROPFIND / GET / HEAD`（默认允许，需通过目录密码门禁）
+- **写操作**：`PUT / MKCOL / DELETE / MOVE`（需管理员密码认证）
 
-**认证方式：**
+**管理员认证方式：**
 - `X-Admin-Password` 请求头
 - HTTP Basic Auth（用户名 `admin`，密码为 xlsx 配置中的 `admin_password`）
 
-门禁与网页端一致：受密码保护的路径同样要求密码，密码经 `X-Folder-Password` 请求头传递。
+**目录密码传递：**
+- `X-Folder-Password` 请求头（支持逗号分隔多个密码）
+
+门禁与网页端一致：受密码保护的路径同样要求密码，冷启动时也会先加载配置再校验。
 
 > 多数 WebDAV 客户端不支持自定义请求头。需用支持自定义 Header 的客户端，例如 `rclone`：
 > `rclone lsf remote:/secret --header "X-Folder-Password: 你的密码"`
@@ -283,7 +293,7 @@ WebDAV 挂在 `/dav` 下，支持完整的读写操作：
 - 文件夹密码是访问门禁，不是文件字节加密。
 - OneDrive 仅支持组织租户证书鉴权（app-only），个人消费版 Microsoft 账户不适用。
 - S3 当前为 path-style 寻址。
-- 缓存是 per-isolate 内存，不跨实例。冷启动的实例缓存为空，前几次访问仍需回源。
+- 缓存是 per-isolate 内存，不跨实例。冷启动的实例缓存为空，首次访问会触发配置加载。
 
 ---
 
@@ -306,6 +316,6 @@ src/
   drivers/            s3 / onedrive / registry
   lib/                acl / cache / crypto / dispatch / xlsx-config / xml
   routes/             fs(列表/下载/搜索/直链) / admin(登录/配置) / webdav
-  e5rnl/              actions(40个API动作) / scheduler(调度器) / index(入口)
+  e5rnl/              actions(32个API动作) / scheduler(调度器) / index(入口)
   web/                前端 SPA（index.html + app.js）
 ```

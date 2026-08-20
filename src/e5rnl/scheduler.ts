@@ -174,7 +174,7 @@ export async function runRenewalForAccounts(
   const cacheOnlyAccounts = accounts.filter(a => !a.e5rnl);
 
   // 分配预算
-  const cacheBudgetPerAccount = 2; // 非续期账号分配 2 次调用（list + 1）
+  const cacheBudgetPerAccount = 1; // 非续期账号分配 1 次调用（list）
   const totalCacheBudget = cacheOnlyAccounts.length * cacheBudgetPerAccount;
   const renewalBudget = totalBudget - totalCacheBudget;
   const budgetPerRenewalAccount = renewalAccounts.length > 0 

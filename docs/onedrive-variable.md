@@ -1,86 +1,189 @@
-# OneDrive 账号变量模板（AUTH_*）
+# OneDrive 账号配置指南（v4 变量拆分方案）
 
-> 用途：复制下面 JSON → 只改内容 → 粘进 Cloudflare 变量（Secret）→ 部署即挂载。
-> 变量名任意：`AUTH_<随便写>`，例如 `AUTH_ONEDRIVE`、`AUTH_MAIN`。一个变量 = 一个 OneDrive 账号（可挂多个目录）。
+> 用途：配置 OneDrive 账号挂载到 Elist。v4 方案将凭据和挂载配置分离到两个变量中。
 
 ---
 
-## 1. 复制即用的模板
+## 1. 变量结构
+
+v4 方案需要配置两个变量：
+
+- `AUTH_<NAME>`：账号凭据（Secret）
+- `MOUNT_<NAME>`：挂载配置（Variables）
+
+变量名后缀必须匹配，例如 `AUTH_ZHU` 对应 `MOUNT_ZHU`。
+
+---
+
+## 2. AUTH_<NAME> 配置
+
+### 示例
 
 ```json
 {
   "type": "onedrive",
   "tenant_id": "AAAA0000-1111-2222-3333-444455556666",
   "client_id": "BBBB1111-2222-3333-4444-555566667777",
-  "cert_pem": "-----BEGIN CERTIFICATE-----\nMIIE...（上传到 Azure 应用的那张公钥证书 PEM 整段，换行写成 \n）...\n-----END CERTIFICATE-----",
-  "cert_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n...（整段私钥，换行写成 \n）...\n-----END PRIVATE KEY-----",
-  "user_id": "zhangsan@yourorg.onmicrosoft.com",
-  "mounts": [
-    { "path": "/od", "root": "/", "title": "我的网盘" }
+  "cert_pem": "-----BEGIN CERTIFICATE-----\nMIIE...（整段证书，换行用 \n）...\n-----END CERTIFICATE-----",
+  "cert_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----"
+}
+```
+
+### 字段说明
+
+| 字段 | 必填 | 含义 | 获取方式 |
+|------|:---:|------|--------|
+| `type` | ✅ | 固定 `"onedrive"` | — |
+| `tenant_id` | ✅ | 组织租户 ID（GUID） | Entra ID → Overview → Tenant ID |
+| `client_id` | ✅ | 应用 ID | Entra ID → App registrations → Application (client) ID |
+| `cert_pem` | ✅ | 公钥证书 PEM | 生成证书时保留 |
+| `cert_key` | ✅ | 私钥 PEM | 生成证书时保留 |
+
+> 注意：证书内容中的换行需要用 `\n` 转义，不能直接换行。
+
+---
+
+## 3. MOUNT_<NAME> 配置
+
+### 示例
+
+```json
+{
+  "users": [
+    {
+      "user_id": "zhangsan@yourorg.onmicrosoft.com",
+      "mounts": [
+        {
+          "path": "/od",
+          "root": "/",
+          "title": "我的网盘",
+          "e5rnl": true
+        }
+      ]
+    }
   ]
 }
 ```
 
-> 注意：`cert_key` 里每一行结尾要写成 JSON 转义的 `\n`（反斜杠+n），不要真的换行粘贴多行私钥，否则 JSON 解析会挂。
-
----
-
-## 2. 字段说明
-
-| 字段 | 必填 | 含义 | 去哪拿 |
-|------|:---:|------|--------|
-| `type` | ✅ | 固定 `"onedrive"` | — |
-| `tenant_id` | ✅ | 组织租户 ID（GUID） | Entra ID → Overview → **Tenant ID** |
-| `client_id` | ✅ | 应用注册的 Application (client) ID | Entra ID → App registrations → 你的应用 → **Application (client) ID** |
-| `cert_pem` | ✅ | **公钥证书** PEM（`BEGIN CERTIFICATE`），上传到 Azure 应用的那张 | 证书文件（你生成证书时一并保留，或点击 Azure 已上传证书行导出） |
-| `cert_key` | ✅ | **私钥** PEM（`BEGIN PRIVATE KEY`，不是公钥证书） | 证书生成时保留的私钥文件 |
-| `user_id` | ✅ | 访问**哪个用户**的盘：UPN 全串（`xxx@租户.onmicrosoft.com`）或 objectId GUID | 租户用户列表 / Graph `GET /users` |
-| `mounts` | ✅ | 挂载点数组（可多个） | — |
-
-### mounts[] 每项
+### users[] 字段
 
 | 字段 | 必填 | 含义 |
 |------|:---:|------|
-| `path` | ✅ | URL 前缀，如 `/od`、`/photos`（访问入口） |
-| `root` | 否 | 盘内起始目录，默认 `/`（账号根） |
-| `title` | 否 | 界面上显示的盘名 |
-| `cache` | 否 | 覆盖全局 CACHE_CONTROL（如 `"public, max-age=600"`） |
-| `hide` | 否 | `true` = 根目录列表隐藏（硬路径仍可访问） |
-| `sort` | 否 | 本盘默认排序（如 `"time_desc"`） |
+| `user_id` | ✅ | 用户 UPN（如 `user@org.com`）或 objectId |
 
-### 一个应用挂多目录 / 多用户
-- **多目录**：`mounts` 数组里加一项即可（凭据不重复写）。
-- **多用户**（同一租户）：复制整份变量，改 `user_id` + `mounts` 的 `path`，另起一个 `AUTH_xxx` 名字。一个应用注册 + 管理员授予的 `Files.Read.All`（Application 权限）覆盖整个租户所有用户，所以凭据可复用，只换 `user_id`。
+### mounts[] 字段
+
+| 字段 | 必填 | 含义 |
+|------|:---:|------|
+| `path` | ✅ | URL 前缀，如 `/od`、`/photos` |
+| `root` | 否 | 盘内起始目录，默认 `/` |
+| `title` | 否 | 界面显示的盘名 |
+| `cache` | 否 | 覆盖全局 CACHE_CONTROL |
+| `e5rnl` | 否 | 是否启用 E5 续期（默认 false） |
 
 ---
 
-## 3. 怎么加进 Cloudflare
+## 4. 多用户配置
 
-方式一（推荐，Git 集成场景）：
-1. Dashboard → Workers → 你的 `Elist` → **Settings → Variables and Secrets**
-2. **Add → Secret**：名称 `AUTH_ONEDRIVE`，值 = 上面改好的整段 JSON
-3. 部署会自动带上；无 Git 集成就手动 `wrangler deploy` 一次
+同一应用可以挂载多个用户的 OneDrive：
 
-方式二（命令行）：
-```bash
-echo '{"type":"onedrive",...}' | wrangler secret put AUTH_ONEDRIVE
+```json
+{
+  "users": [
+    {
+      "user_id": "user1@org.com",
+      "mounts": [
+        { "path": "/od1", "root": "/", "title": "用户1的网盘" }
+      ]
+    },
+    {
+      "user_id": "user2@org.com",
+      "mounts": [
+        { "path": "/od2", "root": "/", "title": "用户2的网盘" }
+      ]
+    }
+  ]
+}
 ```
 
 ---
 
-## 4. 指纹的事不用你管
+## 5. 配置步骤
 
-**Azure 门户里证书那行"指纹"显示是 `7D0EB3709B555837A7C533D87B74EA47A9277524` 这种十六进制**——这其实是给你看的，模板里**完全不用填**。
+### 方式一：Cloudflare Dashboard
 
-我们的代码从你给的 `cert_pem`（公钥证书 PEM）**自动算 SHA-1 指纹并转 base64url**，塞进 JWT 的 `x5t` 头。所以你只需要把证书的 PEM 文本贴进 `cert_pem`，指纹的事交给系统，不会再因为格式不对被 Azure 拒。
+1. 进入 Workers & Pages → 你的 Elist 服务
+2. Settings → Variables
+3. 添加变量：
+   - `AUTH_ZHU`：类型 Secret，值为凭据 JSON
+   - `MOUNT_ZHU`：类型 Plaintext，值为挂载配置 JSON
 
-> 兼容性：如果你已经有 `cert_thumbprint` 的旧配置，仍然可以填（base64url 形式），系统会优先用它。不填则从 `cert_pem` 自动算。
+### 方式二：Wrangler CLI
+
+```bash
+# 配置凭据（Secret）
+wrangler secret put AUTH_ZHU
+# 粘贴 JSON
+
+# 配置挂载（Variables，在 wrangler.toml 或 Dashboard 设置）
+```
 
 ---
 
-## 5. 其他坑
+## 6. 权限配置
 
-- **解析失败静默跳过**：变量 JSON 写错（含私钥真换行）时，该账号**不报错、盘直接不出现**。改了变量后记得点「刷新」或重开页面验证。
-- **个人版不支持**：outlook.com 等个人 Microsoft 账户不能走证书 app-only，必须组织/教育/开发者租户。
-- **权限没授权**：应用需被管理员授予 Graph **Application 权限** `Files.Read.All`（或 `Files.ReadWrite.All`）并 **Grant admin consent**，否则 Graph 403。
-- **证书 ≠ token**：证书 10 年内可随时换 access token（client_credentials 无 refresh_token、无续期操作）；到期只需在 Azure 换新证书并更新 `cert_pem` + `cert_key`。
+应用需要以下 Microsoft Graph 权限：
+
+- `Files.Read.All`（读取文件）
+- `Files.ReadWrite.All`（读写文件，如需上传/编辑功能）
+- `User.Read.All`（读取用户信息）
+
+配置步骤：
+1. Entra ID → App registrations → 你的应用
+2. API permissions → Add a permission → Microsoft Graph
+3. 选择 Application permissions（不是 Delegated）
+4. 添加上述权限
+5. 点击 "Grant admin consent"
+
+---
+
+## 7. 证书指纹
+
+Azure 门户显示的证书指纹（如 `7D0EB3709B555837A7C533D87B74EA47A9277524`）仅供查看，**不需要手动配置**。
+
+系统会自动从 `cert_pem` 计算 SHA-1 指纹并转换为 base64url 格式，用于 JWT 的 `x5t` 头。
+
+---
+
+## 8. 常见问题
+
+### 盘不显示
+
+- 检查变量名后缀是否匹配（`AUTH_ZHU` 对应 `MOUNT_ZHU`）
+- 检查 JSON 格式是否正确（特别是证书中的 `\n` 转义）
+- 查看 Worker 日志是否有解析错误
+
+### 403 权限错误
+
+- 确认已添加 Graph API 权限
+- 确认已点击 "Grant admin consent"
+- 等待几分钟让权限生效
+
+### 证书过期
+
+证书有效期通常为 1-2 年，过期后：
+1. 在 Azure 生成新证书
+2. 更新 `AUTH_<NAME>` 中的 `cert_pem` 和 `cert_key`
+3. 重新部署
+
+---
+
+## 9. 密码和隐藏配置
+
+目录密码和隐藏配置不再通过变量设置，而是通过 `.elist.xlsx` 配置文件管理：
+
+1. 在存储根目录创建 `.elist.xlsx`
+2. 配置 `CONF_PW` 环境变量（可选，用于加密配置文件）
+3. 通过管理界面或直接编辑 xlsx 文件配置密码和隐藏
+
+详见 [配置管理文档](./config-management.md)。

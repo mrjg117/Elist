@@ -164,7 +164,7 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     }
     const destUrl = new URL(destination);
     const destPath = decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/';
-    const destMount = getMounts(c.env).find(m => destPath.startsWith(m.mount));
+    const destMount = getMounts(c.env).find(m => destPath === m.mount || destPath.startsWith(m.mount + '/'));
     if (!destMount || destMount.mount !== mount.mount) {
       return c.body(null, 400); // 不支持跨挂载点移动
     }

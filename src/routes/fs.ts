@@ -50,7 +50,7 @@ function isFresh(c: Context<{ Bindings: Env }>): boolean {
 }
 
 /** 获取所有存储账号（从 AUTH_* 环境变量解析） */
-function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth: any }> {
+export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string; auth: any }> {
   const accounts: Array<{ name: string; type: string; auth: any }> = [];
   
   for (const [key, value] of Object.entries(env)) {
@@ -327,7 +327,7 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
       return c.json({ error: 'Invalid mount path' }, 400);
     }
   } else {
-    // 使用 CONFIG_MOUNT 环境变量或默认第一个挂载点
+    // 使用 CONFIG_AUTH 环境变量或默认第一个挂载点
     configMount = await getConfigMount(c);
     if (!configMount) {
       return c.json({ error: 'No mount point available for config storage' }, 500);

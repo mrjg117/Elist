@@ -28,9 +28,9 @@ export async function checkPathPassword(
   _readText?: ReadText,
   _fresh = false
 ): Promise<{ ok: boolean; lockedAt?: string }> {
-  // 确保配置已加载
+  // 未加载时拒绝访问（安全：防止冷启动绕过）
   if (!xlsxConfig.isLoaded()) {
-    return { ok: true }; // 未加载时默认放行，由调用方触发加载
+    return { ok: false, lockedAt: fullPath };
   }
 
   const segs = fullPath.split('/').filter(Boolean);

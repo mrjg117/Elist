@@ -33,7 +33,7 @@
   - 字体文件：字形预览
 - **文件分享**：复制链接、二维码分享。
 - **被动缓存搜索**：只在用户已浏览过的目录里匹配，绝不主动全量扫描。
-- **E5 订阅续期**：Cron 触发，随机抽取 API 动作执行，多账号预算分配。
+- **E5 订阅续期**：Cron 触发，随机抽取 API 动作执行（32 个动作），多账号预算分配。
 - **存储 0 依赖**：不使用 KV / D1 / SQL；状态 = env(secret) + 存储内 `.elist.xlsx`。
 
 ---
@@ -306,6 +306,6 @@ src/
   drivers/            s3 / onedrive / registry
   lib/                acl / cache / crypto / dispatch / xlsx-config / xml
   routes/             fs(列表/下载/搜索/直链) / admin(登录/配置) / webdav
-  e5rnl/              actions(40个API动作) / scheduler(调度器) / index(入口)
+  e5rnl/              actions(32个API动作) / scheduler(调度器) / index(入口)
   web/                前端 SPA（index.html + app.js）
 ```

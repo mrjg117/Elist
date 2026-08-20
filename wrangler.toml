@@ -13,43 +13,32 @@ html_handling = "auto-trailing-slash"
 not_found_handling = "single-page-application"
 
 # =====================================================================
-# 配置方案（v3）：每账号一个 AUTH_<NAME> 变量，经 wrangler secret 注入。
-# 一个账号只写一次凭据，下面 mounts[] 列出该账号要挂的 N 个目录。
+# 配置方案（v4，变量拆分）：
+#   - AUTH_<NAME>：账号机密（type、凭据等）
+#   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
+#   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
 #
-# 账号 JSON 结构：
-# {
-#   "type": "onedrive" | "s3",
-#   ...凭据字段...,
-#   "mounts": [ { "path":"/url前缀", "root":"/账号内路径", "title":"可选",
-#                 "cache":"可选覆盖", "hide":false, "sort":"可选" } ]
-# }
+# AUTH_<NAME> 示例（OneDrive）：
+#   {"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_pem":"...","cert_key":"..."}
 #
-# 挂载级可选字段（均可缺省）：
-#   hide   : true 时根目录列表不显示该盘（仅界面隐藏，硬路径仍可访问）
-#   sort   : 本盘列表默认排序（name_asc|name_desc|time_asc|time_desc|size_asc|size_desc|type_asc|type_desc）
+# MOUNT_<NAME> 示例：
+#   {"users":[{"user_id":"user@org.com","mounts":[{"path":"/od","root":"/","title":"我的网盘","e5rnl":true}]}]}
 #
-# .passwd 标记文件（放在某文件夹内即对该文件夹生效）：
-#   直接写明文密码，一行一个（多行=多把钥匙，便于轮换/过渡）。
-#   前端弹窗输密码，经 X-Folder-Password 请求头校验，密码不进 URL/历史/日志。
-# 隐藏用同目录 .hidden（每行一个条目名）。
+# 密码/隐藏配置：统一存放在存储根目录的 .elist.xlsx 文件中
+#   - passwords sheet：路径密码配置
+#   - hidden sheet：隐藏目录列表
+#   - config sheet：全局配置（如 admin_password）
 #
-# 例 A：OneDrive 组织租户（证书 app-only，免失效，E5/E3/商业版/教育版/开发者租户均可）
-#   wrangler secret put AUTH_ONEDRIVE_ZHU
-#   值：{"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_pem":"-----BEGIN CERTIFICATE-----\n<上传到 Azure 的公钥证书 PEM>\n-----END CERTIFICATE-----","cert_key":"-----BEGIN PRIVATE KEY-----\n<对应的私钥 PEM>\n-----END PRIVATE KEY-----","user_id":"<要挂载用户的UPN或objectId>","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
-#   说明：x5t（JWT 头里的证书指纹）由系统从 cert_pem 自动算出 SHA-1 的 base64url，不用手动换。
-#
-# 例 B：S3 / R2 / OSS / COS / MinIO（靠 endpoint 区分，无需分类型）
-#   wrangler secret put AUTH_R2_BACKUP
-#   值：{"type":"s3","endpoint":"https://<id>.r2.cloudflarestorage.com","region":"auto","bucket":"<bucket>","access_key_id":"<ak>","secret_access_key":"<sk>","mounts":[{"path":"/backup","root":"/"}]}
-#
-# 同账号挂多目录：在 mounts[] 再加一项即可（凭据不重复写）。
+# 环境变量：
+#   - CONF_PW：xlsx 配置文件加密密码（可选）
+#   - CONFIG_AUTH：指定配置文件存储账号（可选，如 AUTH_ZHU 则写 ZHU）
+#   - CONFIG_PATH：配置文件存储路径（可选，默认 /）
 # =====================================================================
 
 # 公用变量（非敏感，可明文；也可 secret）
 [vars]
 SITE_TITLE = "Elist"
 CACHE_CONTROL = "public, max-age=300"
-SORT = "name_asc"
 # MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
 # S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
 

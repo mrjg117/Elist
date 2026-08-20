@@ -100,10 +100,25 @@ export async function handleScheduled(env: Env): Promise<void> {
 }
 
 /**
+ * Token 缓存，避免每次 API 调用都重新获取 token。
+ * 缓存键：tenant_id:user_id
+ */
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+/**
  * 获取 OneDrive token（复用 OneDriveDriver 的逻辑）。
  * 这里简化实现，直接调用 Microsoft Graph API。
+ * 添加缓存机制，避免重复获取 token。
  */
 async function getOneDriveToken(account: RenewalConfig): Promise<string> {
+  const cacheKey = `${account.tenant_id}:${account.user_id}`;
+  const cached = tokenCache.get(cacheKey);
+  
+  // 如果缓存存在且未过期（提前 60 秒刷新），直接返回
+  if (cached && Date.now() < cached.expiresAt - 60000) {
+    return cached.token;
+  }
+
   const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(account.tenant_id)}/oauth2/v2.0/token`;
   
   const body = new URLSearchParams({
@@ -154,5 +169,14 @@ async function getOneDriveToken(account: RenewalConfig): Promise<string> {
   }
 
   const data = await res.json() as any;
-  return data.access_token;
+  const token = data.access_token;
+  const expiresIn = data.expires_in || 3600;
+  
+  // 缓存 token，expiresAt 为毫秒时间戳
+  tokenCache.set(cacheKey, {
+    token,
+    expiresAt: Date.now() + expiresIn * 1000,
+  });
+  
+  return token;
 }

@@ -160,6 +160,8 @@ export async function runRenewalForAccount(
  * 按续期需求分配预算：
  * - 续期账号：平均分配剩余预算
  * - 非续期账号：只分配 1-2 次调用（刷缓存）
+ *
+ * 所有账号并发执行，提高效率。
  */
 export async function runRenewalForAccounts(
   accounts: RenewalConfig[],
@@ -177,33 +179,45 @@ export async function runRenewalForAccounts(
   const cacheBudgetPerAccount = 1; // 非续期账号分配 1 次调用（list）
   const totalCacheBudget = cacheOnlyAccounts.length * cacheBudgetPerAccount;
   const renewalBudget = totalBudget - totalCacheBudget;
-  const budgetPerRenewalAccount = renewalAccounts.length > 0 
+  const budgetPerRenewalAccount = renewalAccounts.length > 0
     ? Math.floor(renewalBudget / renewalAccounts.length)
     : 0;
 
   console.log(`[E5RNL] 总预算 ${totalBudget}，续期账号 ${renewalAccounts.length} 个（每个 ${budgetPerRenewalAccount}），非续期账号 ${cacheOnlyAccounts.length} 个（每个 ${cacheBudgetPerAccount}）`);
 
-  // 执行每个账号
-  for (const account of accounts) {
+  // 并发执行所有账号
+  const accountPromises = accounts.map(async (account) => {
     const key = `${account.tenant_id}:${account.user_id}`;
     const budget = account.e5rnl ? budgetPerRenewalAccount : cacheBudgetPerAccount;
-    
+
     try {
       const results = await runRenewalForAccount(account, () => getToken(account), budget, options);
-      resultsMap.set(key, results);
-      
+
       const ok = results.filter(r => r.ok && !r.skipped).length;
       const total = results.filter(r => !r.skipped).length;
       console.log(`[E5RNL] 账号 ${key} ${account.e5rnl ? '续期' : '刷缓存'}完成：${ok}/${total} 成功，预算 ${budget}`);
+
+      return { key, results };
     } catch (err: any) {
       console.error(`[E5RNL] 账号 ${key} 失败：`, err);
-      resultsMap.set(key, [{
-        action: 'renewal',
-        ok: false,
-        error: err.message,
-        readonly: false,
-      }]);
+      return {
+        key,
+        results: [{
+          action: 'renewal',
+          ok: false,
+          error: err.message,
+          readonly: false,
+        }],
+      };
     }
+  });
+
+  // 等待所有账号完成
+  const allResults = await Promise.all(accountPromises);
+
+  // 收集结果
+  for (const { key, results } of allResults) {
+    resultsMap.set(key, results);
   }
 
   return resultsMap;

@@ -95,11 +95,22 @@ export function findMount(
   return { mount: best, rest };
 }
 
-/** 规范化路径：统一前导 /，去尾斜杠（根除外）。 */
+/** 规范化路径：统一前导 /，去尾斜杠（根除外），解析 .. 防止路径穿越。 */
 export function normalize(path: string): string {
   if (!path.startsWith('/')) path = '/' + path;
-  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
-  return path;
+  // 解析相对路径段，防止路径穿越
+  const parts = path.split('/');
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === '.' || part === '') continue;
+    if (part === '..') {
+      resolved.pop(); // 安全：空数组 pop 返回 undefined，不会越界
+      continue;
+    }
+    resolved.push(part);
+  }
+  const normalized = '/' + resolved.join('/');
+  return normalized === '/' ? '/' : normalized;
 }
 
 /**
@@ -109,10 +120,12 @@ export function normalize(path: string): string {
  */
 export function getRoots(env: Env): { path: string; title?: string }[] {
   const mounts = getMounts(env);
+  // 先按路径长度升序排序，确保父目录先于子目录处理
+  const sorted = [...mounts].sort((a, b) => a.mount.length - b.mount.length);
   const roots: { path: string; title?: string }[] = [];
   
   // 按前缀去重：如果 /od 已添加，则 /od/photos 不再添加
-  for (const m of mounts) {
+  for (const m of sorted) {
     const isChild = roots.some(r => m.mount === r.path || m.mount.startsWith(r.path + '/'));
     if (!isChild) {
       roots.push({ path: m.mount, title: m.title });

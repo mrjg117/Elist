@@ -55,8 +55,9 @@ export class S3Driver extends BaseDriver implements Driver {
     const canonicalQuery = qEntries
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
-    const canonicalHeaders = `host:${u.host}\n`;
-    const signedHeaders = 'host';
+    // AWS SigV4 要求所有 x-amz-* 头都必须纳入签名，按字母序排列
+    const canonicalHeaders = `host:${u.host}\nx-amz-content-sha256:${bodyHash}\nx-amz-date:${amzdate}\n`;
+    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
     const canonicalRequest = [
       method,
       u.pathname,
@@ -99,9 +100,11 @@ export class S3Driver extends BaseDriver implements Driver {
     const canonicalQuery = qEntries
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
+    // S3 要求路径中每个 segment 单独 URI 编码（保留 / 作为路径分隔符）
+    const encodedKey = key.split('/').map(encodeURIComponent).join('/');
     const canonicalRequest = [
       'GET',
-      `/${this.bucket}/${key}`,
+      `/${this.bucket}/${encodedKey}`,
       canonicalQuery,
       `host:${this.host}\n`,
       'host',
@@ -118,22 +121,44 @@ export class S3Driver extends BaseDriver implements Driver {
     const kService = await hmacRaw(kRegion, 's3');
     const kSigning = await hmacRaw(kService, 'aws4_request');
     const signature = bufToHex(await hmacRaw(kSigning, stringToSign));
-    return `${this.endpoint}/${this.bucket}/${key}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+    return `${this.endpoint}/${this.bucket}/${encodedKey}?${canonicalQuery}&X-Amz-Signature=${signature}`;
   }
 
   // ---- 公开接口 ----
   async list(rest: string): Promise<Entry[]> {
     const prefix = this.toAccountPath(rest).replace(/^\//, '');
-    const q = new URLSearchParams({
-      'list-type': '2',
-      prefix,
-      delimiter: '/',
-    });
-    const url = `${this.endpoint}/${this.bucket}?${q.toString()}`;
-    const headers = await this.signHeaders('GET', url, paramsToObj(q), EMPTY_SHA256);
-    const r = await fetch(url, { headers });
-    if (!r.ok) throw new Error(`S3 list failed: ${r.status}`);
-    return this.parseList(await r.text(), rest);
+    const allEntries: Entry[] = [];
+    let continuationToken: string | undefined;
+
+    // 分页获取所有结果
+    do {
+      const q = new URLSearchParams({
+        'list-type': '2',
+        prefix,
+        delimiter: '/',
+      });
+      if (continuationToken) {
+        q.set('continuation-token', continuationToken);
+      }
+      const url = `${this.endpoint}/${this.bucket}?${q.toString()}`;
+      const headers = await this.signHeaders('GET', url, paramsToObj(q), EMPTY_SHA256);
+      const r = await fetch(url, { headers });
+      if (!r.ok) throw new Error(`S3 list failed: ${r.status}`);
+      const xml = await r.text();
+      const entries = this.parseList(xml, rest);
+      allEntries.push(...entries);
+
+      // 检查是否有更多结果
+      const truncatedMatch = xml.match(/<IsTruncated>([\s\S]*?)<\/IsTruncated>/);
+      const isTruncated = truncatedMatch && truncatedMatch[1].toLowerCase() === 'true';
+      const tokenMatch = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/);
+      continuationToken = tokenMatch ? tokenMatch[1] : undefined;
+
+      // 如果没有更多结果或没有获取到 token，退出循环
+      if (!isTruncated || !continuationToken) break;
+    } while (true);
+
+    return allEntries;
   }
 
   async link(rest: string): Promise<string> {
@@ -213,19 +238,38 @@ export class S3Driver extends BaseDriver implements Driver {
       const sourcePrefix = sourceKey.endsWith('/') ? sourceKey : sourceKey + '/';
       const targetPrefix = targetKey.endsWith('/') ? targetKey : targetKey + '/';
       
-      // 列出所有以 sourcePrefix 开头的对象
-      const listUrl = `${this.endpoint}/${this.bucket}?prefix=${encodeURIComponent(sourcePrefix)}`;
-      const listHeaders = await this.signHeaders('GET', listUrl, {}, EMPTY_SHA256);
-      const listResp = await fetch(listUrl, { headers: listHeaders });
-      if (!listResp.ok) throw new Error(`S3 list failed: ${listResp.status}`);
-      
-      const xml = await listResp.text();
-      const keyRe = /<Key>([\s\S]*?)<\/Key>/g;
-      let m: RegExpExecArray | null;
+      // 分页列出所有以 sourcePrefix 开头的对象
       const keys: string[] = [];
-      while ((m = keyRe.exec(xml))) {
-        keys.push(decodeURIComponent(m[1]));
-      }
+      let continuationToken: string | undefined;
+      
+      do {
+        const q = new URLSearchParams({
+          'list-type': '2',
+          prefix: sourcePrefix,
+        });
+        if (continuationToken) {
+          q.set('continuation-token', continuationToken);
+        }
+        const listUrl = `${this.endpoint}/${this.bucket}?${q.toString()}`;
+        const listHeaders = await this.signHeaders('GET', listUrl, paramsToObj(q), EMPTY_SHA256);
+        const listResp = await fetch(listUrl, { headers: listHeaders });
+        if (!listResp.ok) throw new Error(`S3 list failed: ${listResp.status}`);
+        
+        const xml = await listResp.text();
+        const keyRe = /<Key>([\s\S]*?)<\/Key>/g;
+        let m: RegExpExecArray | null;
+        while ((m = keyRe.exec(xml))) {
+          keys.push(decode(m[1]));
+        }
+        
+        // 检查是否有更多结果
+        const truncatedMatch = xml.match(/<IsTruncated>([\s\S]*?)<\/IsTruncated>/);
+        const isTruncated = truncatedMatch && truncatedMatch[1].toLowerCase() === 'true';
+        const tokenMatch = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/);
+        continuationToken = tokenMatch ? tokenMatch[1] : undefined;
+        
+        if (!isTruncated || !continuationToken) break;
+      } while (true);
       
       if (keys.length === 0) {
         throw new Error(`S3 move failed: source not found`);
@@ -236,7 +280,7 @@ export class S3Driver extends BaseDriver implements Driver {
         const newKey = targetPrefix + key.slice(sourcePrefix.length);
         const newCopyUrl = `${this.endpoint}/${this.bucket}/${newKey}`;
         const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
-        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${key}`;
+        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeURIComponent(key).replace(/%2F/g, '/')}`;
         const newCopyResp = await fetch(newCopyUrl, {
           method: 'PUT',
           headers: newCopyHeaders,
@@ -299,8 +343,9 @@ export class S3Driver extends BaseDriver implements Driver {
     const re = /<Contents>([\s\S]*?)<\/Contents>/g;
     while ((m = re.exec(xml))) {
       const b = m[1];
-      const key = (b.match(/<Key>([\s\S]*?)<\/Key>/) || [])[1];
-      if (!key || key.endsWith('/')) continue;
+      const keyRaw = (b.match(/<Key>([\s\S]*?)<\/Key>/) || [])[1];
+      if (!keyRaw || keyRaw.endsWith('/')) continue;
+      const key = decode(keyRaw);
       if (acctPrefix && key === acctPrefix) continue; // 跳过目录自身占位
       const size = +(b.match(/<Size>(\d+)<\/Size>/) || [])[1] || 0;
       const lm = (b.match(/<LastModified>([\s\S]*?)<\/LastModified>/) || [])[1];
@@ -311,19 +356,14 @@ export class S3Driver extends BaseDriver implements Driver {
   }
 }
 
+/** 反转义 XML 实体（S3 Key 是原始 UTF-8，不是 URL 编码，不做 decodeURIComponent）。 */
 function decode(s: string): string {
-  try {
-    // 先反转义 XML 实体，再解码 URL 编码
-    const unescaped = s
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'")
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-      .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
-    return decodeURIComponent(unescaped);
-  } catch {
-    return s;
-  }
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)));
 }

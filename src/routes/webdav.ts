@@ -6,6 +6,7 @@ import { checkPathPassword, MARKER_FILES } from '../lib/acl';
 import { getMounts } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { loadXlsxConfig } from './fs';
+import { extractAdminPassword } from '../lib/auth';
 
 /**
  * WebDAV handler（挂载在 /dav/*）。
@@ -191,19 +192,4 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   }
 
   return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND, PUT, MKCOL, DELETE, MOVE' });
-}
-
-/** 从 Basic Auth 提取管理员密码（用户名为 admin） */
-function extractAdminPassword(c: Context<{ Bindings: Env }>): string | null {
-  const auth = c.req.header('Authorization') || '';
-  if (!auth.toLowerCase().startsWith('basic ')) return null;
-  try {
-    const decoded = atob(auth.slice(6).trim());
-    const i = decoded.indexOf(':');
-    if (i < 0) return null;
-    const user = decoded.slice(0, i);
-    const pass = decoded.slice(i + 1);
-    if (user === 'admin') return pass;
-  } catch {}
-  return null;
 }

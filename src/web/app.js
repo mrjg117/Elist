@@ -184,7 +184,10 @@ function renderGridView(entries, listEl) {
     item.onclick = () => {
       const p = item.dataset.path;
       if (item.dataset.dir === 'true') openPath(p);
-      else preview(p, item.querySelector('.name').textContent);
+      else {
+        const entry = entries.find(e => e.path === p);
+        preview(p, item.querySelector('.name').textContent, entry);
+      }
     };
   });
 }
@@ -1121,7 +1124,10 @@ renderListView = function(entries, listEl) {
     row.onclick = () => {
       const p = row.dataset.path;
       if (row.dataset.dir === 'true') openPath(p);
-      else preview(p, row.querySelector('.name').textContent);
+      else {
+        const entry = entries.find(e => e.path === p);
+        preview(p, row.querySelector('.name').textContent, entry);
+      }
     };
   });
 };

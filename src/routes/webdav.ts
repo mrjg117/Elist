@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env, Mount } from '../types';
+import type { Env, Mount, Entry } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
@@ -99,9 +99,19 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 
   if (method === 'PROPFIND') {
     const depth = c.req.header('Depth') || '1';
-    const entries = (await driver.list(rest)).filter((e) => !MARKER_FILES.has(e.name));
+    
+    // 尝试列出目录内容，如果失败则可能是文件
+    let entries: Entry[] = [];
+    let isDir = true;
+    try {
+      entries = (await driver.list(rest)).filter((e) => !MARKER_FILES.has(e.name));
+    } catch {
+      // list 失败，可能是文件路径
+      isDir = false;
+    }
+    
     const includeSelf = depth !== '0';
-    const xml = buildPropfind(baseUrl, storagePath, entries, includeSelf);
+    const xml = buildPropfind(baseUrl, storagePath, entries, includeSelf, isDir);
     return new Response(xml, {
       status: 207,
       headers: {

@@ -108,21 +108,27 @@ export function normalize(path: string): string {
  * 隐藏状态从 .elist.xlsx 配置读取，由调用方处理。
  */
 export function getRoots(env: Env): { path: string; title?: string }[] {
-  const seen = new Set<string>();
-  const list = getMounts(env)
-    .filter((m) => !seen.has(m.mount) && seen.add(m.mount))
-    .map((m) => ({ path: m.mount, title: m.title }));
+  const mounts = getMounts(env);
+  const roots: { path: string; title?: string }[] = [];
+  
+  // 按前缀去重：如果 /od 已添加，则 /od/photos 不再添加
+  for (const m of mounts) {
+    const isChild = roots.some(r => m.mount === r.path || m.mount.startsWith(r.path + '/'));
+    if (!isChild) {
+      roots.push({ path: m.mount, title: m.title });
+    }
+  }
 
   const order = (env.MOUNT_ORDER || '')
     .split(',')
     .map((s) => normalize(s.trim()))
     .filter(Boolean);
   if (order.length) {
-    list.sort((a, b) => {
+    roots.sort((a, b) => {
       const ia = order.indexOf(a.path);
       const ib = order.indexOf(b.path);
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
   }
-  return list;
+  return roots;
 }

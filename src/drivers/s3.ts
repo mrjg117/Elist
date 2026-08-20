@@ -186,10 +186,11 @@ export class S3Driver extends BaseDriver implements Driver {
 
   async move(sourceRest: string, targetRest: string): Promise<void> {
     // S3 没有原生的 move/rename，需要 copy + delete
+    // 如果是目录，需要递归处理所有子对象
     const sourceKey = this.toAccountPath(sourceRest).replace(/^\//, '');
     const targetKey = this.toAccountPath(targetRest).replace(/^\//, '');
     
-    // Copy
+    // 先尝试作为单个对象移动
     const copyUrl = `${this.endpoint}/${this.bucket}/${targetKey}`;
     const copyHeaders = await this.signHeaders('PUT', copyUrl, {}, EMPTY_SHA256);
     copyHeaders['x-amz-copy-source'] = `/${this.bucket}/${sourceKey}`;
@@ -197,16 +198,62 @@ export class S3Driver extends BaseDriver implements Driver {
       method: 'PUT',
       headers: copyHeaders,
     });
-    if (!copyResp.ok) throw new Error(`S3 copy failed: ${copyResp.status}`);
     
-    // Delete source
-    const deleteUrl = `${this.endpoint}/${this.bucket}/${sourceKey}`;
-    const deleteHeaders = await this.signHeaders('DELETE', deleteUrl, {}, EMPTY_SHA256);
-    const deleteResp = await fetch(deleteUrl, {
-      method: 'DELETE',
-      headers: deleteHeaders,
-    });
-    if (!deleteResp.ok) throw new Error(`S3 delete source failed: ${deleteResp.status}`);
+    if (copyResp.ok) {
+      // 单个对象移动成功，删除源
+      const deleteUrl = `${this.endpoint}/${this.bucket}/${sourceKey}`;
+      const deleteHeaders = await this.signHeaders('DELETE', deleteUrl, {}, EMPTY_SHA256);
+      const deleteResp = await fetch(deleteUrl, {
+        method: 'DELETE',
+        headers: deleteHeaders,
+      });
+      if (!deleteResp.ok) throw new Error(`S3 delete source failed: ${deleteResp.status}`);
+    } else if (copyResp.status === 404) {
+      // 可能是目录，需要递归处理
+      const sourcePrefix = sourceKey.endsWith('/') ? sourceKey : sourceKey + '/';
+      const targetPrefix = targetKey.endsWith('/') ? targetKey : targetKey + '/';
+      
+      // 列出所有以 sourcePrefix 开头的对象
+      const listUrl = `${this.endpoint}/${this.bucket}?prefix=${encodeURIComponent(sourcePrefix)}`;
+      const listHeaders = await this.signHeaders('GET', listUrl, {}, EMPTY_SHA256);
+      const listResp = await fetch(listUrl, { headers: listHeaders });
+      if (!listResp.ok) throw new Error(`S3 list failed: ${listResp.status}`);
+      
+      const xml = await listResp.text();
+      const keyRe = /<Key>([\s\S]*?)<\/Key>/g;
+      let m: RegExpExecArray | null;
+      const keys: string[] = [];
+      while ((m = keyRe.exec(xml))) {
+        keys.push(decodeURIComponent(m[1]));
+      }
+      
+      if (keys.length === 0) {
+        throw new Error(`S3 move failed: source not found`);
+      }
+      
+      // 递归复制和删除
+      for (const key of keys) {
+        const newKey = targetPrefix + key.slice(sourcePrefix.length);
+        const newCopyUrl = `${this.endpoint}/${this.bucket}/${newKey}`;
+        const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
+        newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${key}`;
+        const newCopyResp = await fetch(newCopyUrl, {
+          method: 'PUT',
+          headers: newCopyHeaders,
+        });
+        if (!newCopyResp.ok) throw new Error(`S3 copy failed: ${newCopyResp.status}`);
+        
+        const newDeleteUrl = `${this.endpoint}/${this.bucket}/${key}`;
+        const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
+        const newDeleteResp = await fetch(newDeleteUrl, {
+          method: 'DELETE',
+          headers: newDeleteHeaders,
+        });
+        if (!newDeleteResp.ok) throw new Error(`S3 delete source failed: ${newDeleteResp.status}`);
+      }
+    } else {
+      throw new Error(`S3 copy failed: ${copyResp.status}`);
+    }
   }
 
   async delete(rest: string): Promise<void> {

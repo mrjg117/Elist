@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { getMounts } from '../config';
 import { dispatch } from '../lib/dispatch';
+import { loadXlsxConfig } from './fs';
 
 // 简单的会话管理（内存存储）
 const sessions = new Set<string>();
@@ -25,6 +26,9 @@ function isAuthenticated(c: Context<{ Bindings: Env }>): boolean {
 
 // POST /api/admin/login
 export async function handleLogin(c: Context<{ Bindings: Env }>) {
+  // 确保配置已加载
+  await loadXlsxConfig(c, false);
+  
   const { password } = await c.req.json();
   
   // 从 xlsx 配置获取管理员密码
@@ -65,6 +69,9 @@ export async function handleGetConfig(c: Context<{ Bindings: Env }>) {
     return c.json({ error: '未授权' }, 401);
   }
   
+  // 确保配置已加载
+  await loadXlsxConfig(c, false);
+  
   const path = c.req.query('path');
   if (!path) {
     return c.json({ error: '缺少path参数' }, 400);
@@ -87,6 +94,9 @@ export async function handleSetConfig(c: Context<{ Bindings: Env }>) {
   if (!isAuthenticated(c)) {
     return c.json({ error: '未授权' }, 401);
   }
+  
+  // 确保配置已加载
+  await loadXlsxConfig(c, false);
   
   const { path, password, hint, hidden } = await c.req.json();
   

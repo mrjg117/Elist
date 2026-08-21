@@ -85,3 +85,12 @@
 - **向上导航**：工具栏「向上」按钮 + 列表首行/网格首卡 `..` 项（非根目录时），点击回上级。
 - **左侧树形导航**：盘符/子目录可展开折叠（▸/▾），懒加载 `/api/list` 子目录，展开状态与子树内容缓存（`render()` 重建 DOM 后恢复），导航时自动展开祖先链并高亮当前路径。
 - **验证**：`node --check src/web/app.js` 通过；`tsc --noEmit`（后端已改）零错误。
+
+### 修复+增强：保存位置全部失败（补 user_id）/ 列表统一 ⋯ 菜单 / 树跟随 / 界面精致化
+
+- **保存「所有保存位置都失败」修复**：`admin.ts` 的 `getConfigDriver` 构造驱动时 `driver.init` 漏传 `user_id`（`fs.ts` 内 3 处 `driver.init` 都传了），OneDrive app-only 必报 `requires user_id` → 4 个保存目标全抛错。补 `user_id: getMountUserId(env, targetAccount.name)`（`fs.ts:80` 的 `getMountUserId` 原为内部函数，已补 `export`）。
+- **列表行统一 ⋯ 菜单**：`itemActionsHtml` 由 4 个图标按钮改为单个 ⋯ 按钮（`data-act="menu"`），点开与网格同一个 `entryMenu` 操作菜单（重命名/移动/隐藏/删除），交互全局统一。
+- **树跟随当前目录**：新增 `scrollTreeToActive()`，导航后 `ensureExpanded(...).then(scrollTreeToActive)`，把树中高亮项 `scrollIntoView({block:'nearest'})` 滚动到侧栏可见位置（仅树内滚动，不动主区）。
+- **loading 居中**：侧栏 `loadTreeChildren` 不再显示「加载中…/（无子目录）/（加载失败）」文字（失败静默、空目录静默），加载统一由主内容区 `.state-msg` 居中提示承担。
+- **界面精致化（克制、零运行时开销）**：网格缩略图按类型着色浅底（文件夹/视频/音频/图片/压缩包/文档/代码/文本各自柔和底色）；内容切换 0.16s 淡入（纯 CSS animation）；空状态加类型图标；卡片 hover 阴影加深；预览标题栏加分隔线。
+- **验证**：`node --check` 通过；`tsc --noEmit` 零错误。

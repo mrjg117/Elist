@@ -77,7 +77,7 @@ let pendingLoad: Promise<void> | null = null;
  *  优先取命中 CONFIG_PATH 的挂载用户；否则取首个有挂载的用户。
  *  缺失会触发 onedrive.ts 的 `requires user_id` 报错，导致配置加载失败、所有子目录被门禁拦截。
  */
-function getMountUserId(env: Env, accountName: string): string {
+export function getMountUserId(env: Env, accountName: string): string {
   const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
   if (typeof raw !== 'string') return '';
   try {

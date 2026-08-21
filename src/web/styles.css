@@ -458,3 +458,33 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   width: 100%; height: 100%; border: none; border-radius: 0; background: #000;
 }
 .modal-backdrop.fs-image #previewImg { max-width: 100vw; max-height: 100vh; }
+
+/* ================= 界面精致化 ================= */
+/* 网格缩略图按类型着色浅底 */
+.thumb-dir { background: rgba(91, 157, 255, 0.14); }
+.thumb-video { background: rgba(244, 112, 103, 0.14); }
+.thumb-audio { background: rgba(180, 131, 242, 0.14); }
+.thumb-image { background: rgba(78, 195, 183, 0.14); }
+.thumb-archive { background: rgba(224, 169, 59, 0.15); }
+.thumb-doc { background: rgba(91, 157, 255, 0.12); }
+.thumb-code { background: rgba(62, 207, 142, 0.12); }
+.thumb-text { background: rgba(152, 162, 181, 0.12); }
+.thumb-file { background: var(--surface-2); }
+.thumb-img { background: var(--surface-2); }
+
+/* 内容切换淡入 */
+.content { animation: contentFade 0.16s ease; }
+@keyframes contentFade { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+
+/* 空状态图标 */
+.state-msg .state-ico { color: var(--text-faint); opacity: 0.55; }
+.state-msg .state-ico svg { width: 42px; height: 42px; display: block; }
+
+/* 列表行 ⋯ 按钮 */
+.row-menu { padding: 4px 8px; }
+
+/* 预览标题分隔线 */
+.preview-modal .pv-title { border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
+
+/* 卡片 hover 微调 */
+.card:hover { box-shadow: var(--shadow); }

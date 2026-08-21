@@ -309,7 +309,7 @@ function render() {
   renderCrumbs();
   renderContent();
   bindToolbar();
-  ensureExpanded(document.getElementById('drives'), state.path);
+  ensureExpanded(document.getElementById('drives'), state.path).then(scrollTreeToActive);
 }
 
 function renderDrives() {
@@ -331,12 +331,13 @@ function renderDrives() {
 }
 
 async function loadTreeChildren(path, box) {
-  box.innerHTML = '<div class="tree-loading">加载中…</div>';
+  // 轻量加载：不在侧栏显示"加载中/空目录"文字，加载统一由主内容区居中提示承担
+  box.innerHTML = '';
   let data;
   try { data = await apiGet(`/api/list?path=${enc(path)}`); }
-  catch { box.innerHTML = '<div class="tree-loading">（加载失败）</div>'; return; }
+  catch { return; }
   const dirs = (Array.isArray(data) ? data : []).filter((x) => x.isDir);
-  if (!dirs.length) { box.innerHTML = '<div class="tree-loading">（无子目录）</div>'; return; }
+  if (!dirs.length) return;
   const html = dirs.map((d) => {
     const full = joinPath(path, d.name);
     const active = state.path === full || state.path.startsWith(full + '/') ? 'active' : '';
@@ -391,6 +392,12 @@ async function ensureExpanded(box, targetPath) {
   }
 }
 
+// 树跟随当前目录：把高亮项滚动到侧栏可见位置（仅树内滚动）
+function scrollTreeToActive() {
+  const btn = document.querySelector('#drives .drive.active');
+  if (btn) btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
 function renderCrumbs() {
   const box = document.getElementById('crumbs');
   const parts = state.path.split('/').filter(Boolean);
@@ -410,7 +417,7 @@ function renderContent() {
   if (state.loading) { c.innerHTML = `<div class="state-msg">加载中…</div>`; return; }
   if (state.error) { c.innerHTML = `<div class="state-msg"><div class="err">${esc(state.error)}</div></div>`; return; }
   if (!state.entries.length) {
-    c.innerHTML = `<div class="state-msg">${state.search ? '无匹配结果' : '空目录'}</div>`;
+    c.innerHTML = `<div class="state-msg"><span class="state-ico">${state.search ? ICON.file : ICON.dir}</span>${state.search ? '无匹配结果' : '空目录'}</div>`;
     return;
   }
   c.innerHTML = state.view === 'list' ? renderList() : renderGrid();
@@ -420,12 +427,7 @@ function renderContent() {
 
 function itemActionsHtml(entry) {
   if (!state.admin) return '';
-  return `<div class="fab-acts">
-    <button class="btn sm" data-act="rename" data-path="${esc(entry.path)}" title="重命名">${ICON.rename}</button>
-    <button class="btn sm" data-act="move" data-path="${esc(entry.path)}" title="移动">${ICON.move}</button>
-    <button class="btn sm" data-act="hide" data-path="${esc(entry.path)}" title="隐藏/取消隐藏">${ICON.hide}</button>
-    <button class="btn sm danger" data-act="delete" data-path="${esc(entry.path)}" title="删除">${ICON.del}</button>
-  </div>`;
+  return `<button class="btn sm row-menu" data-act="menu" data-path="${esc(entry.path)}" title="操作">${ICON.menu}</button>`;
 }
 
 function renderList() {
@@ -460,7 +462,7 @@ function renderGrid() {
     const isImg = !e.isDir && mediaType(e.name) === 'image';
     const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      <div class="thumb"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
+      <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
       <div class="name">${esc(e.name)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
       ${menu}

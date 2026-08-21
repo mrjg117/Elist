@@ -498,9 +498,19 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 /* ================= 批量选择 ================= */
 .batch-bar { display: inline-flex; align-items: center; gap: 5px; }
 .batch-bar .btn { padding: 4px 9px; font-size: 12px; }
-.list .ck { width: 26px; padding: 0 4px; }
-.list .ckbox, .card-ck .ckbox { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
-.card-ck { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 4px; background: var(--bg-elev); border-radius: 6px; }
+.list .ck { width: 26px; padding: 0 4px; text-align: center; }
+.list .ckbox, .card-ck .ckbox, .list .ckall { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.card-ck { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 3px; background: var(--bg-elev); border-radius: 6px; opacity: 0.75; transition: opacity 0.12s; }
+.card:hover .card-ck { opacity: 1; }
+
+/* 底部浮动批量条（不占用工具栏，布局永不变化） */
+.float-batch {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 55; display: flex; align-items: center; gap: 8px;
+  background: var(--bg-elev); border: 1px solid var(--border-strong);
+  border-radius: 12px; padding: 8px 12px; box-shadow: var(--shadow);
+}
+.float-batch .fb-count { font-size: 12.5px; color: var(--text-dim); margin-right: 4px; white-space: nowrap; }
 
 /* 列表行垂直居中强化 */
 .row td { vertical-align: middle; }

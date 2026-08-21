@@ -48,7 +48,6 @@ const state = {
   search: '',
   drives: [],
   showHidden: false,
-  selectMode: false,
   selected: new Set(),
 };
 
@@ -300,18 +299,19 @@ function render() {
             <option value="type_desc"${state.sort === 'type_desc' ? ' selected' : ''}>类型 ↓</option>
           </select>
           <button class="btn" id="refresh" title="刷新">刷新</button>
-          ${state.selectMode ? `<div class="batch-bar">
-            <button class="btn sm" id="selall">全选</button>
-            <button class="btn sm" id="selinv">反选</button>
-            <button class="btn sm" id="sellink">复制链接</button>
-            <button class="btn sm primary" id="seldl">下载(${state.selected.size})</button>
-            <button class="btn sm ghost" id="selx">退出</button>
-          </div>` : `<button class="btn" id="select" title="批量选择">☑ 选择</button>`}
           ${state.admin ? `<button class="btn primary" id="newfolder">${ICON.newfolder}<span>新建</span></button>` : ''}
         </div>
         <div class="content" id="content"></div>
       </main>
-    </div>`;
+    </div>
+    ${state.selected.size ? `<div class="float-batch" id="floatbatch">
+      <span class="fb-count" id="fb-count">已选 ${state.selected.size}</span>
+      <button class="btn sm" id="selall">全选</button>
+      <button class="btn sm" id="selinv">反选</button>
+      <button class="btn sm" id="sellink">复制链接</button>
+      <button class="btn sm primary" id="seldl">下载</button>
+      <button class="btn sm ghost" id="selclear">✕ 清空</button>
+    </div>` : ''}`;
   renderDrives();
   renderCrumbs();
   renderContent();
@@ -371,20 +371,19 @@ function badgesHtml(e) {
 function renderList() {
   const rows = state.entries.map((e) => {
     const ic = entryIcon(e);
-    const ck = state.selectMode
-      ? `<td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>` : '';
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      ${ck}
+      <td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
       <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
       <td class="mod">${esc(fmtDate(e.modified))}</td>
       <td class="acts">${itemActionsHtml(e)}</td>
     </tr>`;
   }).join('');
-  const thCk = state.selectMode ? '<th class="ck"></th>' : '';
+  const allChecked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
   return `<table class="list">
     <thead><tr>
-      ${thCk}<th data-sort="name">名称</th><th data-sort="size">大小</th>
+      <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
+      <th data-sort="name">名称</th><th data-sort="size">大小</th>
       <th data-sort="time">修改时间</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -396,10 +395,8 @@ function renderGrid() {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
     const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
-    const ck = state.selectMode
-      ? `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>` : '';
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      ${ck}
+      <span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>
       <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
       <div class="name">${esc(e.name)}${badgesHtml(e)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
@@ -410,16 +407,23 @@ function renderGrid() {
 }
 
 function bindItems(c) {
-  // 多选复选框
+  // 多选复选框（常驻勾选列）
   c.querySelectorAll('.ckbox').forEach((cb) => {
     cb.onclick = (ev) => ev.stopPropagation();
     cb.onchange = () => {
       const p = cb.dataset.path;
       if (cb.checked) state.selected.add(p);
       else state.selected.delete(p);
-      updateBatchBar();
+      updateBatchUI();
     };
   });
+  // 表头全选
+  const ckall = c.querySelector('.ckall');
+  if (ckall) ckall.onchange = () => {
+    if (ckall.checked) state.entries.forEach((e) => state.selected.add(e.path));
+    else state.entries.forEach((e) => state.selected.delete(e.path));
+    updateBatchUI();
+  };
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
@@ -489,21 +493,19 @@ function bindToolbar() {
   const nf = document.getElementById('newfolder');
   if (nf) nf.onclick = () => doMkdir();
 
-  // 批量选择
-  const selBtn = document.getElementById('select');
-  if (selBtn) selBtn.onclick = () => { state.selectMode = true; render(); };
-  const selx = document.getElementById('selx');
-  if (selx) selx.onclick = () => { state.selectMode = false; state.selected.clear(); render(); };
+  // 底部浮动批量条
   const selall = document.getElementById('selall');
-  if (selall) selall.onclick = () => { state.selected = new Set(state.entries.map((e) => e.path)); render(); };
+  if (selall) selall.onclick = () => { state.entries.forEach((e) => state.selected.add(e.path)); updateBatchUI(); };
   const selinv = document.getElementById('selinv');
   if (selinv) selinv.onclick = () => {
     state.entries.forEach((e) => {
       if (state.selected.has(e.path)) state.selected.delete(e.path);
       else state.selected.add(e.path);
     });
-    render();
+    updateBatchUI();
   };
+  const selclear = document.getElementById('selclear');
+  if (selclear) selclear.onclick = () => { state.selected.clear(); updateBatchUI(); };
   const sellink = document.getElementById('sellink');
   if (sellink) sellink.onclick = copySelectedLinks;
   const seldl = document.getElementById('seldl');
@@ -717,9 +719,15 @@ async function doDelete(entry) {
 }
 
 // ---------------- 批量选择 ----------------
-function updateBatchBar() {
-  const b = document.getElementById('seldl');
-  if (b) b.textContent = `下载(${state.selected.size})`;
+function updateBatchUI() {
+  // 底部浮动条：显隐 + 数量；行复选框与表头全选同步
+  const fb = document.getElementById('floatbatch');
+  const cnt = document.getElementById('fb-count');
+  if (cnt) cnt.textContent = `已选 ${state.selected.size}`;
+  if (fb) fb.style.display = state.selected.size ? 'flex' : 'none';
+  document.querySelectorAll('.content .ckbox').forEach((cb) => { cb.checked = state.selected.has(cb.dataset.path); });
+  const all = document.querySelector('.list .ckall');
+  if (all) all.checked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
 }
 async function copySelectedLinks() {
   const paths = [...state.selected];

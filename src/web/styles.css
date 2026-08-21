@@ -208,13 +208,14 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   position: sticky; top: 0; background: var(--bg); z-index: 1; cursor: pointer; user-select: none;
 }
 .list thead th:hover { color: var(--text); }
-/* 固定列宽：名称列占满剩余空间，防长名截断过早 */
-.list th:nth-child(2), .list td:nth-child(2) { width: 110px; }
-.list th:nth-child(3), .list td:nth-child(3) { width: 180px; }
-.list th:nth-child(4), .list td:nth-child(4) { width: 170px; }
+/* 固定列宽（5 列布局：勾选/名称/大小/修改时间/操作）：
+   勾选列 26px、名称自适应占剩余、大小 110、修改时间 150、操作 170 */
+.list th:nth-child(3), .list td:nth-child(3) { width: 110px; }
+.list th:nth-child(4), .list td:nth-child(4) { width: 150px; }
+.list th:nth-child(5), .list td:nth-child(5) { width: 170px; }
 @media (max-width: 820px) {
-  .list th:nth-child(2), .list td:nth-child(2),
-  .list th:nth-child(3), .list td:nth-child(3) { width: auto; }
+  .list th:nth-child(3), .list td:nth-child(3),
+  .list th:nth-child(4), .list td:nth-child(4) { width: auto; }
 }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }

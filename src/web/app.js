@@ -345,20 +345,8 @@ function renderCrumbs() {
 
 function renderContent() {
   const c = document.getElementById('content');
-  // 全屏居中加载遮罩（屏幕正中间，侧栏零加载文字）
-  let ov = document.getElementById('global-loading');
-  if (state.loading) {
-    c.innerHTML = '';
-    if (!ov) {
-      ov = document.createElement('div');
-      ov.id = 'global-loading';
-      ov.className = 'global-loading';
-      ov.textContent = '加载中…';
-      app.appendChild(ov);
-    }
-    return;
-  }
-  if (ov) ov.remove();
+  // 加载提示：内容区居中文字，不遮挡正常内容（不遮罩整页）
+  if (state.loading) { c.innerHTML = `<div class="state-msg">加载中…</div>`; return; }
   if (state.error) { c.innerHTML = `<div class="state-msg"><div class="err">${esc(state.error)}</div></div>`; return; }
   if (!state.entries.length) {
     c.innerHTML = `<div class="state-msg"><span class="state-ico">${state.search ? ICON.file : ICON.dir}</span>${state.search ? '无匹配结果' : '空目录'}</div>`;

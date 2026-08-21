@@ -493,15 +493,6 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .badge { margin-left: 6px; font-size: 12px; opacity: 0.85; vertical-align: -1px; white-space: nowrap; }
 .badge + .badge { margin-left: 3px; }
 
-/* ================= 全屏加载遮罩 ================= */
-.global-loading {
-  position: fixed; inset: 0; z-index: 60;
-  display: grid; place-items: center;
-  background: rgba(0, 0, 0, 0.35); color: var(--text);
-  font-size: 14px; letter-spacing: 0.5px;
-  backdrop-filter: blur(1px);
-}
-
 /* ================= 批量选择 ================= */
 .batch-bar { display: inline-flex; align-items: center; gap: 6px; }
 .list .ck { width: 34px; padding-right: 4px; }

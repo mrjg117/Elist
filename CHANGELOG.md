@@ -114,3 +114,9 @@
 - **列表垂直居中强化**：`.row td` 垂直居中 + `.label` inline-flex + line-height 固定 + `.glyph` line-height:0，图标与文字严格对齐。
 - **图片默认适应窗口**：`.image-container img` 加 `object-fit: contain`（大图打开即完整显示不裁切）。
 - **验证**：`node --check` + `tsc --noEmit` 零错误。
+
+### 修复：回退全屏加载遮罩（过度设计，遮挡内容）
+
+- 上轮把"加载中"做成**全屏 fixed 半透明遮罩**（inset:0 + rgba 黑底 + blur），过度设计，**整页被黑罩盖住、所有正常内容被遮挡**。
+- "屏幕中间"=「加载文字在内容区居中显示」，不是全屏遮罩。
+- 修复：删除 `.global-loading` CSS 和 renderContent 里创建/移除遮罩的代码；恢复内容区 `.state-msg` 居中文字提示（不遮挡）。

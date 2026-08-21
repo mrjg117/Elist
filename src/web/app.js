@@ -345,8 +345,8 @@ function renderCrumbs() {
 
 function renderContent() {
   const c = document.getElementById('content');
-  // 加载提示：内容区居中文字，不遮挡正常内容（不遮罩整页）
-  if (state.loading) { c.innerHTML = `<div class="state-msg">加载中…</div>`; return; }
+  // 加载中不显示任何文字（避免"加载中"出现位置问题），加载完直接出内容
+  if (state.loading) { c.innerHTML = ''; return; }
   if (state.error) { c.innerHTML = `<div class="state-msg"><div class="err">${esc(state.error)}</div></div>`; return; }
   if (!state.entries.length) {
     c.innerHTML = `<div class="state-msg"><span class="state-ico">${state.search ? ICON.file : ICON.dir}</span>${state.search ? '无匹配结果' : '空目录'}</div>`;

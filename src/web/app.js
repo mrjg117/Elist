@@ -1,7 +1,7 @@
 // ============================================================
-//  Elist 前端 —— 零构建原生 SPA（带左侧栏）
-//  性能优先：无框架运行时、静态 CSS、Plyr 仅在预览媒体时懒加载，
-//  失败自动回退原生 <video>/<audio>（自带进度条）。
+//  Elist 前端 —— 零构建原生 SPA（带左侧栏 + 全量预览）
+//  性能优先：无框架运行时、静态 CSS、所有预览库(vendor)按需懒加载，
+//  媒体用 Plyr（失败回退原生 controls），其余预览类型 lazyload 本地库。
 // ============================================================
 
 const app = document.getElementById('app');
@@ -75,11 +75,36 @@ function mediaType(name) {
   if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus'].includes(e)) return 'audio';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(e)) return 'image';
   if (['pdf'].includes(e)) return 'pdf';
-  if (['txt', 'md', 'markdown', 'json', 'js', 'ts', 'jsx', 'tsx', 'py', 'css', 'scss',
-    'html', 'htm', 'xml', 'log', 'csv', 'yaml', 'yml', 'sh', 'bash', 'toml', 'ini', 'conf',
-    'java', 'c', 'cpp', 'h', 'go', 'rs', 'php', 'sql', 'gitignore'].includes(e)) return 'text';
+  if (['zip'].includes(e)) return 'zip';
   if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(e)) return 'office';
+  if (['ttf', 'otf', 'woff', 'woff2'].includes(e)) return 'font';
+  if (['md', 'markdown'].includes(e)) return 'markdown';
+  if (e === 'json') return 'json';
+  if (['csv', 'tsv'].includes(e)) return 'csv';
+  if (['yaml', 'yml'].includes(e)) return 'yaml';
+  if (e === 'xml') return 'xml';
+  const CODE = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp',
+    'css', 'scss', 'html', 'htm', 'sh', 'bash', 'zsh', 'sql', 'go', 'rs',
+    'rb', 'php'];
+  if (CODE.includes(e)) return 'code';
+  if (['txt', 'log', 'ini', 'conf', 'toml', 'gitignore', 'env', 'properties'].includes(e)) return 'text';
   return 'other';
+}
+function isImageName(name) {
+  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(ext(name));
+}
+function formatXml(xml) {
+  try {
+    let out = '', indent = 0;
+    const cleaned = xml.replace(/>\s*</g, '><');
+    const tokens = cleaned.match(/<[^>]+>|[^<]+/g) || [];
+    for (const t of tokens) {
+      if (t.startsWith('</')) indent--;
+      out += '\n' + '  '.repeat(Math.max(0, indent)) + t;
+      if (t.startsWith('<') && !t.startsWith('</') && !t.endsWith('/>')) indent++;
+    }
+    return out.trim();
+  } catch { return xml; }
 }
 
 // ---------------- API ----------------
@@ -119,8 +144,28 @@ async function apiSend(url, body, { admin = false } = {}) {
   Object.assign(headers, pwHeader());
   return handleRes(await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }));
 }
-async function apiAuth(url, opts = {}) {
-  return handleRes(await fetch(url, opts));
+async function apiAdminGet(url) {
+  return handleRes(await fetch(url, { headers: { 'X-Admin-Password': state.adminPw } }));
+}
+
+// 本地 vendor 库懒加载（按需、缓存、走 CF 边缘）
+const libCache = {};
+function loadScript(url) {
+  if (libCache[url]) return libCache[url];
+  libCache[url] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = () => resolve();
+    s.onerror = () => { delete libCache[url]; reject(new Error('加载失败: ' + url)); };
+    document.head.appendChild(s);
+  });
+  return libCache[url];
+}
+function loadCssOnce(href) {
+  if (document.querySelector('link[href="' + href + '"]')) return;
+  const l = document.createElement('link');
+  l.rel = 'stylesheet'; l.href = href;
+  document.head.appendChild(l);
 }
 
 // ---------------- 导航 ----------------
@@ -250,6 +295,7 @@ function renderContent() {
   }
   c.innerHTML = state.view === 'list' ? renderList() : renderGrid();
   bindItems(c);
+  bindLazyThumbs(c);
 }
 
 function itemActionsHtml(entry) {
@@ -284,8 +330,9 @@ function renderList() {
 function renderGrid() {
   const cards = state.entries.map((e) => {
     const icon = e.isDir ? ICON.dir : ICON.file;
+    const isImg = !e.isDir && isImageName(e.name);
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      <div class="thumb">${icon}</div>
+      <div class="thumb">${icon}${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
       <div class="name">${esc(e.name)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
       <div class="acts">${itemActionsHtml(e)}</div>
@@ -358,6 +405,26 @@ function toggleTheme() {
   const next = cur === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('elist.theme', next);
+}
+
+// 网格图片缩略图懒加载
+function bindLazyThumbs(c) {
+  const imgs = c.querySelectorAll('img.lazy');
+  if (!imgs.length) return;
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => {
+      es.forEach((en) => { if (en.isIntersecting) { io.unobserve(en.target); loadThumb(en.target); } });
+    }, { rootMargin: '300px' });
+    imgs.forEach((img) => io.observe(img));
+  } else {
+    imgs.forEach((img) => loadThumb(img));
+  }
+}
+async function loadThumb(img) {
+  try {
+    const { url } = await apiGet(`/api/link?path=${enc(img.dataset.path)}`);
+    img.src = url;
+  } catch { img.remove(); }
 }
 
 // ---------------- 模态框 ----------------
@@ -443,7 +510,7 @@ function adminMenu() {
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>管理员</h3>
-    <div class="field"><div class="notice">已登录。可管理当前目录密码、隐藏目录、新建文件夹，或重命名/移动/删除文件（鼠标悬停条目右侧按钮）。</div></div>
+    <div class="field"><div class="notice">已登录。可管理当前目录密码、隐藏目录、新建文件夹，或重命名/移动/删除文件（列表条目右侧按钮常显）。</div></div>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
       <button class="btn block" id="setpw">${ICON.lock}<span>设置当前目录密码</span></button>
       <button class="btn block" id="newfolder">${ICON.newfolder}<span>新建文件夹</span></button>
@@ -455,7 +522,7 @@ function adminMenu() {
   m.querySelector('#newfolder').onclick = () => { closeModal(bd); doMkdir(); };
   m.querySelector('#savecfg').onclick = async () => {
     closeModal(bd);
-    try { await apiAuth('/api/admin/save', { method: 'POST' }); alertModal('已保存', '配置已写回 .elist.xlsx。', 'ok'); }
+    try { await apiSend('/api/admin/save', {}, { admin: true }); alertModal('已保存', '配置已写回 .elist.xlsx。', 'ok'); }
     catch (e) { alertModal('保存失败', e.message, 'danger'); }
   };
   m.querySelector('#logout').onclick = () => {
@@ -468,7 +535,7 @@ function adminMenu() {
 
 async function setFolderPassword(path) {
   let cur = { password: '', hint: '', hidden: false };
-  try { cur = await apiAuth(`/api/admin/config?path=${enc(path)}`); } catch (e) {}
+  try { cur = await apiAdminGet(`/api/admin/config?path=${enc(path)}`); } catch (e) {}
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>目录设置：${esc(basename(path) || '根')}</h3>
@@ -488,15 +555,10 @@ async function setFolderPassword(path) {
     const btn = m.querySelector('#ok');
     btn.disabled = true;
     try {
-      await apiAuth('/api/admin/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, password: pw, hint, hidden }),
-      });
-      await apiAuth('/api/admin/save', { method: 'POST' });
+      await apiSend('/api/admin/config', { path, password: pw, hint, hidden }, { admin: true });
+      await apiSend('/api/admin/save', {}, { admin: true });
       closeModal(bd);
       alertModal('已保存', (hidden ? '目录已隐藏。' : '目录设置已更新。'), 'ok');
-      // 若隐藏了当前目录或父链，刷新列表
       await loadSidebar();
       browse(state.path, { fresh: true });
     } catch (e) { btn.disabled = false; alertModal('保存失败', e.message, 'danger'); }
@@ -546,9 +608,7 @@ function loadPlyr() {
   if (window.Plyr) return Promise.resolve(window.Plyr);
   if (plyrPromise) return plyrPromise;
   plyrPromise = new Promise((resolve, reject) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet'; css.href = '/vendor/plyr.css';
-    document.head.appendChild(css);
+    loadCssOnce('/vendor/plyr.css');
     const s = document.createElement('script');
     s.src = '/vendor/plyr.polyfilled.min.js';
     s.onload = () => resolve(window.Plyr);
@@ -558,67 +618,34 @@ function loadPlyr() {
   return plyrPromise;
 }
 
+function previewBar() {
+  return `<div class="preview-controls">
+    <button class="btn" data-act="copy">${ICON.external}<span>复制链接</span></button>
+    <button class="btn primary" data-act="dl">${ICON.download}<span>下载</span></button>
+  </div>`;
+}
+function bindPreviewBar(pb, url) {
+  pb.querySelectorAll('[data-act="copy"]').forEach((b) => { b.onclick = () => copyShareLink(url); });
+  pb.querySelectorAll('[data-act="dl"]').forEach((b) => { b.onclick = () => window.open(url, '_blank'); });
+}
+
 async function openPreview(entry) {
-  const type = mediaType(entry.name);
   const m = document.createElement('div');
   m.className = 'modal preview-modal';
-  m.innerHTML = `<h3 style="display:flex;justify-content:space-between;align-items:center">
-      <span>${esc(entry.name)}</span>
-      <button class="btn ghost sm" id="x">✕</button></h3>
+  m.innerHTML = `<h3 class="pv-title"><span class="pv-name">${esc(entry.name)}</span>
+    <span class="pv-tools">
+      <button class="btn ghost sm" data-pv="info">${ICON.file}<span>信息</span></button>
+      <button class="btn ghost sm" data-pv="x">✕</button>
+    </span></h3>
     <div class="preview-body" id="pb"><div class="state-msg">加载中…</div></div>`;
   const bd = openModal(m);
-  m.querySelector('#x').onclick = () => closeModal(bd);
-
+  m.querySelector('[data-pv="x"]').onclick = () => closeModal(bd);
+  m.querySelector('[data-pv="info"]').onclick = () => showFileInfo(entry);
   const pb = m.querySelector('#pb');
-  const metaBar = `<div class="preview-meta"><span>${type === 'other' ? '文件' : type}</span>${entry.size != null ? `<span>${esc(fmtSize(entry.size))}</span>` : ''}</div>`;
-
   try {
-    if (type === 'video' || type === 'audio' || type === 'image' || type === 'pdf') {
-      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
-      if (type === 'image') {
-        pb.innerHTML = metaBar + `<img src="${esc(url)}" alt="${esc(entry.name)}"/>`;
-      } else if (type === 'pdf') {
-        pb.innerHTML = metaBar + `<iframe src="${esc(url)}"></iframe>`;
-      } else if (type === 'video' || type === 'audio') {
-        pb.innerHTML = metaBar + `<div id="media"></div><div class="preview-bar">
-          <button class="btn" id="opennew">${ICON.external}<span>新窗口</span></button>
-          <button class="btn primary" id="dl">${ICON.download}<span>下载</span></button></div>`;
-        const media = m.querySelector('#media');
-        const el = document.createElement(type);
-        el.controls = true;
-        const src = document.createElement('source');
-        src.src = url;
-        el.appendChild(src);
-        media.appendChild(el);
-        try {
-          const Plyr = await loadPlyr();
-          new Plyr(el, {
-            controls: type === 'video'
-              ? ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'fullscreen']
-              : ['play', 'progress', 'current-time', 'duration', 'mute', 'volume'],
-          });
-        } catch (_) { /* 原生 controls 已兜底，自带进度条 */ }
-        m.querySelector('#opennew').onclick = () => window.open(url, '_blank');
-        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
-      }
-    } else if (type === 'text') {
-      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
-      try {
-        const txt = await (await fetch(url)).text();
-        pb.innerHTML = metaBar + `<pre>${esc(txt)}</pre><div class="preview-bar">
-          <button class="btn primary" id="dl">${ICON.download}<span>下载</span></button></div>`;
-        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
-      } catch (_) {
-        pb.innerHTML = metaBar + `<div class="notice">无法内联读取（可能跨域），可下载查看。</div>
-          <div class="preview-bar"><button class="btn primary" id="dl">${ICON.download}<span>下载</span></button></div>`;
-        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
-      }
-    } else {
-      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
-      pb.innerHTML = metaBar + `<div class="notice">该类型暂不支持内联预览，请下载查看。</div>
-        <div class="preview-bar"><button class="btn primary" id="dl">${ICON.download}<span>下载</span></button></div>`;
-      m.querySelector('#dl').onclick = () => window.open(url, '_blank');
-    }
+    const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
+    const type = mediaType(entry.name);
+    await renderPreview(type, entry, url, pb);
   } catch (e) {
     if (e.message === 'password_required') {
       const pw = await promptPassword(e.lockedAt);
@@ -628,6 +655,358 @@ async function openPreview(entry) {
       pb.innerHTML = `<div class="notice danger">预览失败：${esc(e.message)}</div>`;
     }
   }
+}
+
+async function renderPreview(type, entry, url, pb) {
+  if (type === 'image') return previewImage(url, pb, entry);
+  if (type === 'video' || type === 'audio') return renderMedia(type, entry, url, pb);
+  if (type === 'pdf') {
+    pb.innerHTML = previewBar() + `<iframe src="${esc(url)}" style="width:100%;height:76vh;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>`;
+    return bindPreviewBar(pb, url);
+  }
+  if (type === 'markdown') return renderMarkdown(url, pb);
+  if (type === 'json') return renderJson(url, pb);
+  if (type === 'csv') return renderCsv(url, pb);
+  if (type === 'yaml') return renderYaml(url, pb);
+  if (type === 'xml') return renderXml(url, pb);
+  if (type === 'code') return renderCode(entry, url, pb);
+  if (type === 'text') return renderText(url, pb);
+  if (type === 'zip') return renderZip(url, pb);
+  if (type === 'office') return renderOffice(url, pb);
+  if (type === 'font') return renderFont(url, pb);
+  pb.innerHTML = `<div class="notice">该类型暂不支持内联预览，请下载查看。</div>` + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+function renderMedia(type, entry, url, pb) {
+  pb.innerHTML = `<div id="media"></div><div class="preview-bar">
+    <button class="btn" data-act="opennew">${ICON.external}<span>新窗口</span></button>
+    <button class="btn primary" data-act="dl">${ICON.download}<span>下载</span></button></div>`;
+  const media = pb.querySelector('#media');
+  const el = document.createElement(type);
+  el.controls = true;
+  const src = document.createElement('source');
+  src.src = url;
+  el.appendChild(src);
+  media.appendChild(el);
+  loadPlyr().then((Plyr) => {
+    try {
+      new Plyr(el, {
+        controls: type === 'video'
+          ? ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'fullscreen']
+          : ['play', 'progress', 'current-time', 'duration', 'mute', 'volume'],
+      });
+    } catch (_) { /* 原生 controls 兜底，自带进度条 */ }
+  }).catch(() => {});
+  pb.querySelector('[data-act="opennew"]').onclick = () => window.open(url, '_blank');
+  pb.querySelector('[data-act="dl"]').onclick = () => window.open(url, '_blank');
+}
+
+// ---- 图片增强：缩放/旋转/全屏/复制/二维码/EXIF ----
+async function previewImage(url, pb, entry) {
+  let zoom = 1, rot = 0;
+  let controls = `<div class="preview-controls">
+    <button class="btn" data-img="zin">放大</button>
+    <button class="btn" data-img="zout">缩小</button>
+    <button class="btn" data-img="rot">旋转</button>
+    <button class="btn" data-img="rst">重置</button>
+    <button class="btn" data-img="fs">全屏</button>
+    <button class="btn" data-img="qr">二维码</button>
+  </div>`;
+  let exifPanel = '';
+  if (state.admin) {
+    try {
+      await loadScript('/vendor/exifreader.min.js');
+      const resp = await fetch(url);
+      const buffer = await resp.arrayBuffer();
+      const tags = (window.ExifReader.load || window.ExifReader.read)(buffer);
+      const rows = [];
+      if (tags.Make) rows.push(`相机: ${tags.Make.description}`);
+      if (tags.Model) rows.push(`型号: ${tags.Model.description}`);
+      if (tags.DateTime) rows.push(`时间: ${tags.DateTime.description}`);
+      if (tags.FocalLength) rows.push(`焦距: ${tags.FocalLength.description}`);
+      if (tags.ApertureValue) rows.push(`光圈: ${tags.ApertureValue.description}`);
+      if (tags.ISOSpeedRatings) rows.push(`ISO: ${tags.ISOSpeedRatings.description}`);
+      if (tags.ExposureTime) rows.push(`快门: ${tags.ExposureTime.description}`);
+      if (tags.GPSLatitude && tags.GPSLongitude) {
+        rows.push(`GPS: ${tags.GPSLatitude.description}, ${tags.GPSLongitude.description}`);
+      }
+      if (rows.length) exifPanel = `<div class="exif-panel"><strong>EXIF 信息</strong><br>${rows.join('<br>')}</div>`;
+    } catch (_) { /* EXIF 可选，失败静默 */ }
+  }
+  pb.innerHTML = controls +
+    `<div class="image-container"><img id="previewImg" src="${esc(url)}" alt="${esc(entry.name)}"/></div>` +
+    exifPanel + previewBar();
+  const img = pb.querySelector('#previewImg');
+  const apply = () => { img.style.transform = `scale(${zoom}) rotate(${rot}deg)`; };
+  pb.querySelector('[data-img="zin"]').onclick = () => { zoom = Math.min(5, zoom + 0.15); apply(); };
+  pb.querySelector('[data-img="zout"]').onclick = () => { zoom = Math.max(0.1, zoom - 0.15); apply(); };
+  pb.querySelector('[data-img="rot"]').onclick = () => { rot = (rot + 90) % 360; apply(); };
+  pb.querySelector('[data-img="rst"]').onclick = () => { zoom = 1; rot = 0; apply(); };
+  pb.querySelector('[data-img="fs"]').onclick = () => {
+    const bd = pb.closest('.modal-backdrop');
+    if (!document.fullscreenElement) { if (bd.requestFullscreen) bd.requestFullscreen().catch(() => {}); }
+    else if (document.exitFullscreen) document.exitFullscreen();
+  };
+  pb.querySelector('[data-img="qr"]').onclick = () => showQRCode(url);
+  bindPreviewBar(pb, url);
+}
+
+async function showQRCode(url) {
+  try {
+    await loadScript('/vendor/qrcode-generator.min.js');
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<h3>扫描二维码</h3>
+      <div class="qr-box"><img src="${qr.createDataURL(4, 8)}" alt="二维码"/></div>
+      <div class="row-actions"><button class="btn primary" id="ok">关闭</button></div>`;
+    const bd = openModal(m);
+    m.querySelector('#ok').onclick = () => closeModal(bd);
+  } catch (e) { alertModal('二维码失败', e.message, 'danger'); }
+}
+
+async function copyShareLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    alertModal('已复制', '链接已复制到剪贴板', 'ok');
+  } catch {
+    try {
+      const i = document.createElement('input');
+      i.value = url; document.body.appendChild(i); i.select();
+      document.execCommand('copy'); i.remove();
+      alertModal('已复制', '链接已复制到剪贴板', 'ok');
+    } catch { alertModal('复制失败', '浏览器禁止复制，请手动复制链接', 'danger'); }
+  }
+}
+
+function showFileInfo(entry) {
+  const m = document.createElement('div');
+  m.className = 'modal';
+  m.innerHTML = `<h3>文件信息</h3>
+    <dl class="fileinfo-grid">
+      <dt>名称</dt><dd>${esc(entry.name)}</dd>
+      <dt>路径</dt><dd>${esc(entry.path)}</dd>
+      <dt>大小</dt><dd>${entry.size != null ? esc(fmtSize(entry.size)) : '—'}</dd>
+      <dt>类型</dt><dd>${esc(entry.mime || '—')}</dd>
+      <dt>修改时间</dt><dd>${esc(fmtDate(entry.modified))}</dd>
+    </dl>
+    <div class="row-actions"><button class="btn primary" id="ok">知道了</button></div>`;
+  const bd = openModal(m);
+  m.querySelector('#ok').onclick = () => closeModal(bd);
+}
+
+// ---- Markdown ----
+async function renderMarkdown(url, pb) {
+  await loadScript('/vendor/marked.min.js');
+  await loadScript('/vendor/dompurify.min.js');
+  const text = await (await fetch(url)).text();
+  const html = window.DOMPurify.sanitize(window.marked.parse(text));
+  pb.innerHTML = `<div class="preview-controls"><button class="btn" data-act="mdraw">原始文本</button></div>
+    <div class="markdown-body">${html}</div>
+    <pre class="raw-pre" style="display:none">${esc(text)}</pre>` + previewBar();
+  const md = pb.querySelector('.markdown-body');
+  const raw = pb.querySelector('pre.raw-pre');
+  pb.querySelector('[data-act="mdraw"]').onclick = () => {
+    const showRaw = raw.style.display !== 'none';
+    raw.style.display = showRaw ? 'none' : 'block';
+    md.style.display = showRaw ? 'block' : 'none';
+    pb.querySelector('[data-act="mdraw"]').textContent = showRaw ? '原始文本' : '渲染视图';
+  };
+  bindPreviewBar(pb, url);
+}
+
+// ---- JSON ----
+async function renderJson(url, pb) {
+  const text = await (await fetch(url)).text();
+  let formatted;
+  try { formatted = JSON.stringify(JSON.parse(text), null, 2); } catch { formatted = text; }
+  pb.innerHTML = `<div class="preview-controls"><button class="btn" data-act="wrap">折叠/展开</button></div>
+    <div class="json-viewer"><pre>${esc(formatted)}</pre></div>` + previewBar();
+  const pre = pb.querySelector('pre');
+  pb.querySelector('[data-act="wrap"]').onclick = () => {
+    const collapsed = pre.dataset.collapsed === '1';
+    if (!collapsed) {
+      try { pre.textContent = JSON.stringify(JSON.parse(text)); pre.dataset.collapsed = '1'; pb.querySelector('[data-act="wrap"]').textContent = '展开'; }
+      catch {}
+    } else {
+      pre.textContent = formatted; pre.dataset.collapsed = '0'; pb.querySelector('[data-act="wrap"]').textContent = '折叠/展开';
+    }
+  };
+  bindPreviewBar(pb, url);
+}
+
+// ---- CSV/TSV ----
+async function renderCsv(url, pb) {
+  await loadScript('/vendor/papaparse.min.js');
+  const text = await (await fetch(url)).text();
+  const res = window.Papa.parse(text, { skipEmptyLines: true });
+  const rows = (res.data || []).filter((r) => Array.isArray(r));
+  let html = '<div class="csv-wrap"><table class="csv-table">';
+  rows.slice(0, 3000).forEach((r, i) => {
+    html += `<tr>${r.map((cell) => i === 0 ? `<th>${esc(cell)}</th>` : `<td>${esc(cell)}</td>`).join('')}</tr>`;
+  });
+  html += '</table></div>';
+  if (rows.length > 3000) html += `<div class="notice" style="margin-top:10px">仅显示前 3000 行（共 ${rows.length} 行）</div>`;
+  pb.innerHTML = html + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+// ---- YAML ----
+async function renderYaml(url, pb) {
+  await loadScript('/vendor/js-yaml.min.js');
+  const text = await (await fetch(url)).text();
+  let out = text;
+  try { out = JSON.stringify(window.jsyaml.load(text), null, 2); } catch {}
+  pb.innerHTML = `<div class="json-viewer"><pre>${esc(out)}</pre></div>` + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+// ---- XML ----
+async function renderXml(url, pb) {
+  const text = await (await fetch(url)).text();
+  const pretty = formatXml(text) || text;
+  pb.innerHTML = `<pre class="raw-pre">${esc(pretty)}</pre>` + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+// ---- 纯文本 ----
+async function renderText(url, pb) {
+  const text = await (await fetch(url)).text();
+  pb.innerHTML = `<pre class="raw-pre">${esc(text)}</pre>` + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+// ---- 代码高亮（Prism，按需语言包 + 依赖顺序）----
+const LANG_MAP = {
+  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  py: 'python', java: 'java', c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
+  css: 'css', scss: 'css', html: 'markup', htm: 'markup',
+  sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql', go: 'go', rs: 'rust',
+  rb: 'python', php: 'php', md: 'markdown', yaml: 'yaml', yml: 'yaml', json: 'json',
+};
+const LANG_DEPS = {
+  clike: [], javascript: ['clike'], typescript: ['javascript'],
+  jsx: ['markup', 'javascript'], tsx: ['jsx', 'typescript'],
+  c: ['clike'], cpp: ['c'], java: ['clike'], php: ['markup', 'clike'],
+  markdown: ['markup'], css: [], json: [], yaml: [], bash: [], sql: [],
+  go: [], rust: [], python: [], markup: [],
+};
+async function ensurePrismLang(lang) {
+  if (lang === 'plaintext' || window.Prism.languages[lang]) return;
+  for (const d of (LANG_DEPS[lang] || [])) await ensurePrismLang(d);
+  await loadScript(`/vendor/prism-${lang}.min.js`);
+}
+async function renderCode(entry, url, pb) {
+  await loadScript('/vendor/prism.min.js');
+  loadCssOnce('/vendor/prism-tomorrow.min.css');
+  const text = await (await fetch(url)).text();
+  const lang = LANG_MAP[ext(entry.name)] || 'plaintext';
+  await ensurePrismLang(lang);
+  let highlighted;
+  try {
+    highlighted = lang === 'plaintext'
+      ? esc(text)
+      : window.Prism.highlight(text, window.Prism.languages[lang], lang);
+  } catch { highlighted = esc(text); }
+  pb.innerHTML = `<pre class="code-viewer"><code class="language-${lang}">${highlighted}</code></pre>` + previewBar();
+  bindPreviewBar(pb, url);
+}
+
+// ---- ZIP ----
+async function loadZipOnce(url) {
+  await loadScript('/vendor/fflate.umd.js');
+  const resp = await fetch(url);
+  const buffer = await resp.arrayBuffer();
+  return window.fflate.unzipSync(new Uint8Array(buffer));
+}
+async function renderZip(url, pb) {
+  await loadScript('/vendor/fflate.umd.js');
+  const resp = await fetch(url);
+  const buffer = await resp.arrayBuffer();
+  const zip = window.fflate.unzipSync(new Uint8Array(buffer));
+  const entries = Object.entries(zip);
+  let html = '<div class="zip-file-list"><strong>压缩包内容（' + entries.length + ' 项）</strong><ul>';
+  if (!entries.length) html += '<li class="zip-empty">（空压缩包）</li>';
+  for (const [p, data] of entries) {
+    const isDir = p.endsWith('/');
+    html += `<li class="${isDir ? 'zdir' : ''}"><span class="zname">${esc(p)}</span>`;
+    if (!isDir) {
+      html += `<span class="zsize">${fmtSize(data.length)}</span>
+        <button class="btn sm" data-zip="pv" data-path="${esc(p)}">预览</button>
+        <button class="btn sm" data-zip="dl" data-path="${esc(p)}">下载</button>`;
+    }
+    html += '</li>';
+  }
+  html += '</ul></div>';
+  pb.innerHTML = html + previewBar();
+  pb.querySelectorAll('[data-zip]').forEach((btn) => {
+    btn.onclick = () => {
+      const p = btn.dataset.path;
+      if (btn.dataset.zip === 'pv') extractZipFile(p, url);
+      else downloadZipFile(p, url);
+    };
+  });
+  bindPreviewBar(pb, url);
+}
+async function extractZipFile(filePath, zipUrl) {
+  try {
+    const zip = await loadZipOnce(zipUrl);
+    const data = zip[filePath];
+    if (!data) { alertModal('错误', '文件不存在', 'danger'); return; }
+    const e = filePath.split('.').pop().toLowerCase();
+    const objUrl = URL.createObjectURL(new Blob([data]));
+    const m = document.createElement('div');
+    m.className = 'modal preview-modal';
+    m.innerHTML = `<h3 class="pv-title"><span class="pv-name">${esc(basename(filePath))}</span>
+      <span class="pv-tools"><button class="btn ghost sm" data-zx="dl">${ICON.download}<span>下载</span></button>
+      <button class="btn ghost sm" data-zx="x">✕</button></span></h3>
+      <div class="preview-body" id="pb">加载中…</div>`;
+    const bd = openModal(m);
+    const pb = m.querySelector('#pb');
+    m.querySelector('[data-zx="x"]').onclick = () => closeModal(bd);
+    m.querySelector('[data-zx="dl"]').onclick = () => { const a = document.createElement('a'); a.href = objUrl; a.download = basename(filePath); a.click(); };
+    if (['txt', 'md', 'json', 'js', 'ts', 'py', 'java', 'c', 'cpp', 'h', 'css', 'html',
+      'xml', 'yaml', 'yml', 'ini', 'cfg', 'sh', 'sql', 'go', 'rs', 'rb', 'php', 'log', 'csv', 'toml'].includes(e)) {
+      pb.innerHTML = `<pre class="raw-pre">${esc(new TextDecoder().decode(data))}</pre>`;
+    } else if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif'].includes(e)) {
+      pb.innerHTML = `<img src="${esc(objUrl)}" style="max-width:100%;max-height:72vh;border-radius:8px;display:block"/>`;
+    } else {
+      pb.innerHTML = `<div class="notice">该类型暂不支持内联预览，可下载查看。</div>`;
+    }
+  } catch (e) { alertModal('解压失败', e.message, 'danger'); }
+}
+async function downloadZipFile(filePath, zipUrl) {
+  try {
+    const zip = await loadZipOnce(zipUrl);
+    const data = zip[filePath];
+    if (!data) { alertModal('错误', '文件不存在', 'danger'); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data]));
+    a.download = basename(filePath);
+    a.click();
+  } catch (e) { alertModal('下载失败', e.message, 'danger'); }
+}
+
+// ---- Office（微软在线预览）----
+function renderOffice(url, pb) {
+  const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+  pb.innerHTML = previewBar() +
+    `<div class="notice">Office 在线预览由微软服务提供，需文件直链公网可访问；无法加载时请直接下载。</div>
+    <iframe src="${esc(officeUrl)}" style="width:100%;height:72vh;border:1px solid var(--border);border-radius:8px;background:#fff;margin-top:10px"></iframe>`;
+  bindPreviewBar(pb, url);
+}
+
+// ---- 字体 ----
+function renderFont(url, pb) {
+  pb.innerHTML = `<div style="text-align:center;padding:40px 10px">
+      <div style="font-size:46px;font-family:PreviewFont;word-break:break-all">AaBbCcDdEeFfGg 0123456789 字体预览</div>
+      <style>@font-face { font-family: "PreviewFont"; src: url("${url}"); }</style>
+      <div class="preview-meta" style="justify-content:center;margin-top:18px">字体预览（示例文本）</div>
+    </div>` + previewBar();
+  bindPreviewBar(pb, url);
 }
 
 // ---------------- 启动 ----------------

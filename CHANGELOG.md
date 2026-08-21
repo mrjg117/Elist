@@ -58,3 +58,19 @@
 - **隐藏选项入口**：后端 `hidden` 隐藏逻辑一直存在（admin 菜单里也有复选框），但入口太深、列表无任何隐藏相关按钮，观感像“没了”。现为每条目（管理员）增加常驻“隐藏/取消隐藏”按钮（眼睛图标），直接打开 `setFolderPassword(path)` 复用密码+隐藏设置；保存后自动刷新侧栏与列表。
 - **控制按钮常显**：原列表仅 hover 才显示操作按钮，用户感知“按钮不全”。现为管理员条目常显改名/移动/隐藏/删除四枚图标按钮（hover 仅加深不隐藏）；网格卡片 hover 显示。
 - **视觉打磨**：左侧栏独立可滚动、盘符用驱动器图标、品牌 Logo 方块；工具栏精简（视图切换/排序/刷新/新建），主题与登录移入侧栏底部；卡片 hover 加阴影与位移；整体配色与间距收敛。性能依旧零运行时 CSS、无框架。
+
+### 修复+增强：图标尺寸统一 / 目录设置未授权 / 全量预览恢复
+
+- **图标大小不一与对不齐**（用户反馈“图标太大、按钮大小不匀称”）：根因是 `ICON.*` 裸 SVG 未包 `.glyph` class，而尺寸约束 `.glyph svg{20px}` 只对带 `.glyph` 的元素生效，侧栏/工具栏/列表/按钮的裸 SVG 全部用默认尺寸渲染。修复：`styles.css` 新增统一规则，`.btn svg / .drive svg / .seg button svg / .row .name .label svg / .fab-acts .btn svg / .preview-bar .btn svg` 全部强制 18×18、`display:block; flex:0 0 auto`，侧栏 20×20，卡片缩略图 44×44；配合父容器 flex 居中，图标与文字垂直对齐。
+- **列表文件名截断过早**：`table-layout: fixed` + 固定大小/时间/操作列宽，名称列自动占满剩余宽度（移动端隐藏大小/时间列时自动放宽）。
+- **目录设置页提交“未授权”**（用户反馈设置密码保存报 401）：根因是 `app.js` 调 `/api/admin/config`(POST) 与 `/api/admin/save` 时误用裸 `fetch`（`apiAuth`），未带 `X-Admin-Password` 头，后端管理员鉴权拒绝。修复：3 处改为 `apiSend(..., {admin:true})`（自动带管理员密码头）；读取当前目录配置也新增 `apiAdminGet` 带头获取，使编辑弹窗能预填当前密码/提示/隐藏值，避免只改提示时误清空密码。
+- **全量预览恢复**（用户反馈“zip 预览之类的功能全没了”——上一版零构建重写时被过度精简砍掉）：按旧版功能全量恢复，且预览库全部改为**本地 vendored + 按需懒加载**（`src/web/vendor/`，走 CF 边缘缓存，首屏零额外加载）：
+  - 图片增强：缩放/旋转/重置/全屏、复制链接、二维码（`qrcode-generator`）、管理员可见 EXIF 信息（`exifreader`）。
+  - ZIP 解压预览：`fflate` 列出压缩包内容（目录/文件+大小），支持内部文件内联预览与下载。
+  - Markdown：`marked` + `DOMPurify` 渲染（原始/渲染视图切换）。
+  - JSON：格式化 + 折叠/展开；CSV/TSV：`papaparse` 表格（前 3000 行防卡顿）；YAML：`js-yaml` 转 JSON 展示；XML：缩进格式化。
+  - 代码高亮：`prism` 核心 + 常用语言包本地化（js/ts/py/java/c/cpp/css/html/bash/sql/go/rust/php/json/yaml/markdown/markup/clike），按扩展名映射、按需加载语言包并处理依赖顺序（typescript→javascript→clike 等）。
+  - Office（doc/docx/xls/xlsx/ppt/pptx）：微软在线预览 iframe；字体（ttf/otf/woff/woff2）：@font-face 示例预览；其他类型提示下载（不再自动跳转）。
+  - 网格视图图片缩略图懒加载（IntersectionObserver，失败回退图标）。
+- **预览交互**：预览弹窗标题栏带“信息/关闭”，底部通用“复制链接/下载”；所有按钮事件用 `addEventListener` 绑定（ES module 顶层函数不在 window，旧版内联 `onclick` 不可用）。zip 内部预览/下载用新模态框体系实现。
+- **验证**：`node --check src/web/app.js` 通过；`tsc --noEmit`（后端未改动）零错误。

@@ -44,12 +44,12 @@ CACHE_CONTROL = "public, max-age=300"
 # S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
 
 # E5 续期配置
-# E5RNL_RUN_PROBABILITY = "0.5"    # 每次 cron 触发执行续期的概率（0-1），制造时间波动
-# E5RNL_MAX_API_CALLS = "48"       # 每轮最多 API 调用次数
-# E5RNL_MAX_RUNTIME_MS = "25000"   # 每轮最大运行时间（毫秒）
-# E5RNL_CONCURRENCY = "6"          # 并发批次大小
-# E5RNL_ACTION_DELAY_MIN_MS = "0"  # 动作间最小延迟（毫秒）
-# E5RNL_ACTION_DELAY_MAX_MS = "300" # 动作间最大延迟（毫秒）
+E5RNL_RUN_PROBABILITY = "0.5"    # 每次 cron 触发执行续期的概率（0-1），制造时间波动
+E5RNL_MAX_API_CALLS = "48"       # 每轮最多 API 调用次数
+E5RNL_MAX_RUNTIME_MS = "25000"   # 每轮最大运行时间（毫秒）
+E5RNL_CONCURRENCY = "6"          # 并发批次大小
+E5RNL_ACTION_DELAY_MIN_MS = "0"  # 动作间最小延迟（毫秒）
+E5RNL_ACTION_DELAY_MAX_MS = "300" # 动作间最大延迟（毫秒）
 
 # Cron 触发器：每 10 分钟触发一次 E5 续期
 [triggers]

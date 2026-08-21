@@ -1,6 +1,9 @@
 /**
  * 最小化 xlsx 读写实现（替代 xlsx-populate）
- * 
+ *
+ * 注意：Cloudflare Workers（workerd）运行时没有浏览器全局 DOMParser，
+ * 故此处显式引入 @xmldom/xmldom 提供与标准 DOMParser 兼容的解析能力。
+ *
  * xlsx 本质是 ZIP 压缩的 XML 文件集合：
  * - [Content_Types].xml
  * - _rels/.rels
@@ -10,6 +13,8 @@
  * - xl/sharedStrings.xml
  * - xl/styles.xml (可选)
  */
+
+import { DOMParser as XMLDOMParser } from '@xmldom/xmldom';
 
 /** CRC32 查找表 */
 const CRC32_TABLE = (() => {
@@ -209,9 +214,14 @@ async function zip(files: Map<string, Uint8Array>): Promise<ArrayBuffer> {
   return result.buffer;
 }
 
-/** 解析 XML 提取文本内容 */
-function parseXml(xml: string): Document {
-  const parser = new DOMParser();
+/** 兼容 xmldom 的 getElementsByTagName 包装，统一返回数组（消除 Array.from(any)→unknown[] 推断问题） */
+function getElements(node: any, tag: string): any[] {
+  return Array.from(node.getElementsByTagName(tag)) as any[];
+}
+
+/** 解析 XML 提取文本内容（workerd 无全局 DOMParser，使用 @xmldom/xmldom） */
+function parseXml(xml: string): any {
+  const parser = new XMLDOMParser();
   return parser.parseFromString(xml, 'text/xml');
 }
 
@@ -219,11 +229,11 @@ function parseXml(xml: string): Document {
 function extractCells(sheetXml: string, sharedStrings: string[]): string[][] {
   const doc = parseXml(sheetXml);
   const rows: string[][] = [];
-  
-  const rowElements = Array.from(doc.getElementsByTagName('row'));
+
+  const rowElements = getElements(doc, 'row');
   for (const row of rowElements) {
     const cells: string[] = [];
-    const cellElements = Array.from(row.getElementsByTagName('c'));
+    const cellElements = getElements(row, 'c');
     
     for (const cell of cellElements) {
       const ref = cell.getAttribute('r') || '';
@@ -246,7 +256,7 @@ function extractCells(sheetXml: string, sharedStrings: string[]): string[][] {
         // 内联字符串：从 <is><t> 提取
         const isEl = cell.getElementsByTagName('is')[0];
         if (isEl) {
-          const tEls = Array.from(isEl.getElementsByTagName('t'));
+          const tEls = getElements(isEl, 't');
           cells[colIndex] = tEls.map(t => t.textContent || '').join('');
         }
       } else {
@@ -292,7 +302,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<Map<string, string
   const ssXml = files.get('xl/sharedStrings.xml');
   if (ssXml) {
     const doc = parseXml(ssXml);
-    const siElements = Array.from(doc.getElementsByTagName('si'));
+    const siElements = getElements(doc, 'si');
     for (const si of siElements) {
       const tEl = si.getElementsByTagName('t')[0];
       sharedStrings.push(tEl?.textContent || '');
@@ -304,7 +314,7 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<Map<string, string
   const wbXml = files.get('xl/workbook.xml');
   if (wbXml) {
     const doc = parseXml(wbXml);
-    const sheetElements = doc.getElementsByTagName('sheet');
+    const sheetElements = getElements(doc, 'sheet');
     
     for (let i = 0; i < sheetElements.length; i++) {
       const sheet = sheetElements[i];

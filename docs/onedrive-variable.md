@@ -176,13 +176,23 @@ Azure 门户显示的证书指纹（如 `7D0EB3709B555837A7C533D87B74EA47A927752
 2. 更新 `AUTH_<NAME>` 中的 `cert_pem` 和 `cert_key`
 3. 重新部署
 
+### 点进目录弹“请输入密码”框（实则不是密码问题）
+
+现象：首页能看到盘（如 `/zh33`、`/admin`），但点进去后前端弹出密码输入框，输入任何密码都无效。
+
+根因：`.elist.xlsx` 配置文件加载失败，程序按“加载失败即拒绝一切访问”的安全策略返回 403，前端把这个 403 误当成“目录需要密码”来弹窗。**这不是你设了密码，而是配置没加载成功。**
+
+最常见诱因：`MOUNT_<NAME>` 变量里缺少 `users[].user_id`，或加载配置时没把 `user_id` 传给驱动。OneDrive app-only 鉴权强制要求 `user_id`（UPN 或 objectId），缺失时驱动初始化直接抛 `onedrive app-only requires user_id (UPN or objectId)`，导致加载中断。
+
+排查：用 `wrangler tail` 看 Worker 日志，若出现 `Failed to load config from account: <NAME> Error: onedrive app-only requires user_id ...` 即命中本问题。确认 `MOUNT_<NAME>` 的 `users[]` 里已填 `user_id`。
+
 ---
 
 ## 9. 密码和隐藏配置
 
 目录密码和隐藏配置不再通过变量设置，而是通过 `.elist.xlsx` 配置文件管理：
 
-1. 在存储根目录创建 `.elist.xlsx`
+1. 首次加载时，若存储根目录（默认 `/`，可由 `CONFIG_PATH` 覆盖）不存在 `.elist.xlsx`，系统**会自动创建**一个空白配置文件（已配置 `CONF_PW` 则自动加密），无需手动创建。手动创建时则为：在存储根目录创建 `.elist.xlsx`
 2. 配置 `CONF_PW` 环境变量（可选，用于加密配置文件）
 3. 通过管理界面或直接编辑 xlsx 文件配置密码和隐藏
 

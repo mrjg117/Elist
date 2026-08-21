@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env, Entry, Mount } from '../types';
+import type { Env, Entry, Mount, MountConfig } from '../types';
 import { dispatch } from '../lib/dispatch';
 import {
   checkPathPassword,
@@ -73,6 +73,27 @@ export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string
 // in-flight 去重：防止并发请求重复加载配置
 let pendingLoad: Promise<void> | null = null;
 
+/** 取某账号在 MOUNT_<NAME> 配置中的 user_id（OneDrive app-only 鉴权必需）。
+ *  优先取命中 CONFIG_PATH 的挂载用户；否则取首个有挂载的用户。
+ *  缺失会触发 onedrive.ts 的 `requires user_id` 报错，导致配置加载失败、所有子目录被门禁拦截。
+ */
+function getMountUserId(env: Env, accountName: string): string {
+  const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
+  if (typeof raw !== 'string') return '';
+  try {
+    const cfg = JSON.parse(raw) as MountConfig;
+    const path = normalize(env.CONFIG_PATH || '/');
+    for (const user of cfg.users || []) {
+      for (const mp of user.mounts || []) {
+        if (normalize(mp.path || '/') === path) return user.user_id || '';
+      }
+    }
+    return cfg.users?.[0]?.user_id || '';
+  } catch {
+    return '';
+  }
+}
+
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发） */
 export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
   if (xlsxConfig.isLoaded() && !fresh) return;
@@ -97,13 +118,14 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
           const { getDriverClass } = await import('../drivers/registry');
           const DriverClass = getDriverClass(targetAccount.type);
           if (DriverClass) {
-            const driver = new DriverClass();
-            await driver.init({
-              mount: '/',
-              root: configPath,
-              driver: targetAccount.type,
-              addition: targetAccount.auth,
-            }, c.env);
+          const driver = new DriverClass();
+          await driver.init({
+            mount: '/',
+            root: configPath,
+            driver: targetAccount.type,
+            addition: targetAccount.auth,
+            user_id: getMountUserId(c.env, targetAccount.name),
+          }, c.env);
 
             const xlsxPath = '/.elist.xlsx';
             const content = await driver.readBinary(xlsxPath);
@@ -138,6 +160,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
             root: configPath,
             driver: account.type,
             addition: account.auth,
+            user_id: getMountUserId(c.env, account.name),
           }, c.env);
 
           const xlsxPath = '/.elist.xlsx';
@@ -158,8 +181,19 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
 
     // 没有找到 .elist.xlsx
     // 如果有错误发生，不标记为已加载（保持安全状态）
-    // 否则标记为已加载（空配置）
+    // 否则在存储根自动创建空白 .elist.xlsx 并标记为已加载（空配置）
     if (!hasError) {
+      try {
+        const configMount = await getConfigMount(c);
+        if (configMount) {
+          const { driver, rest } = configMount;
+          const xlsxPath = rest === '/' ? '/.elist.xlsx' : `${rest}/.elist.xlsx`;
+          const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
+          await driver.writeBinary(xlsxPath, content);
+        }
+      } catch (e) {
+        console.error('Failed to auto-create .elist.xlsx:', e);
+      }
       xlsxConfig.markLoaded();
     }
   })();
@@ -208,6 +242,7 @@ async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: 
     root: configPath,
     driver: targetAccount.type,
     addition: targetAccount.auth,
+    user_id: getMountUserId(c.env, targetAccount.name),
   }, c.env);
 
   return { driver, rest: '/' };

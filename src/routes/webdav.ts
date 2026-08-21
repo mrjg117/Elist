@@ -127,8 +127,12 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     
     // 过滤隐藏条目和标记文件
     const visible = entries.filter(e => !MARKER_FILES.has(e.name));
-    
-    const xml = buildPropfind(baseUrl, storagePath, visible, isDir, depth);
+
+    // Depth: 0 时目录只返回自身不列子项；文件始终返回自身（RFC 4918）。
+    // buildPropfind 参数：(baseUrl, selfPath, entries, includeSelf, selfIsDir)
+    // 文件场景 includeSelf=false，文件本身已放入 entries；目录场景 includeSelf=true。
+    const children = isDir && depth === '0' ? [] : visible;
+    const xml = buildPropfind(baseUrl, storagePath, children, isDir, isDir);
     return c.body(xml, 207, {
       'Content-Type': 'application/xml; charset=utf-8',
     });

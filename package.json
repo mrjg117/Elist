@@ -10,6 +10,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.9.11",
     "hono": "^4.6.0",
     "ooxml-encryption": "^1.0.0"
   },

@@ -74,3 +74,14 @@
   - 网格视图图片缩略图懒加载（IntersectionObserver，失败回退图标）。
 - **预览交互**：预览弹窗标题栏带“信息/关闭”，底部通用“复制链接/下载”；所有按钮事件用 `addEventListener` 绑定（ES module 顶层函数不在 window，旧版内联 `onclick` 不可用）。zip 内部预览/下载用新模态框体系实现。
 - **验证**：`node --check src/web/app.js` 通过；`tsc --noEmit`（后端未改动）零错误。
+
+### 修复+增强：管理员鉴权无状态化 / 大 ZIP Range 预览 / 导航与网格交互重做
+
+- **管理员鉴权「未授权」根治（重要）**：上一轮只改了前端带头、后端不认头，问题依旧。根因：`src/routes/admin.ts` 的 `isAuthenticated` 只认 **Session Cookie**（内存 Map），而 Cloudflare Workers isolate 无状态、会被回收，登录发的 session 下次请求常查不到 → 401。修复：`isAuthenticated` 改为 async，在 Cookie 之外新增 **`X-Admin-Password` 头验证**（== config 表 `admin_password`，与 `/api/file/*` 同一套无状态鉴权，`constantTimeCompare` 防时序攻击），三处 handler 加 await。前端已带头无需改；`init()` 增加从 `sessionStorage` 恢复登录态（刷新不再掉管理员）。
+- **大 ZIP 预览（Range 中央目录扫描）**：不再全量下载+`unzipSync`（大包浏览器/服务端都会爆内存）。主路径用 `Range` 只拉末尾 64KB 定位 EOCD → 再拉中央目录（几十 KB）列全部文件清单（秒开、不下载包体）；单文件预览/下载用 `Range` 只拉该条目压缩数据再 `inflate`。无 Range 的存储：≤50MB 才允许整包下载但**仅解析中央目录不 inflate**；>50MB 放弃内容预览，只给「下载整个压缩包」并提示。服务端零改动（本来就不解压）。
+- **网格卡片操作按钮出界**：4 个图标按钮在 158px 卡片上溢出。改为右上角单个 **⋯ 菜单按钮**（hover 显示），点开弹操作菜单（重命名/移动/隐藏/删除）；列表行保持 4 按钮常显。
+- **图片预览**：容器改 flex 居中（原 `display:block` 顶掉 text-align）；全屏改为**纯图片全屏**（黑底、无边框无标题、contain 居中，退出自动恢复）；工具条一行重排（放大/缩小/旋转/重置 | 全屏/二维码/复制链接/下载）。
+- **网格按类型区分**：新增类型图标体系（文件夹/视频/音频/图片/压缩包/文档/代码/文本，各自配色），图片仍走缩略图懒加载；排序新增「类型 ↑↓」（后端无此排序，前端本地按类别重排）。
+- **向上导航**：工具栏「向上」按钮 + 列表首行/网格首卡 `..` 项（非根目录时），点击回上级。
+- **左侧树形导航**：盘符/子目录可展开折叠（▸/▾），懒加载 `/api/list` 子目录，展开状态与子树内容缓存（`render()` 重建 DOM 后恢复），导航时自动展开祖先链并高亮当前路径。
+- **验证**：`node --check src/web/app.js` 通过；`tsc --noEmit`（后端已改）零错误。

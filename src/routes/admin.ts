@@ -41,20 +41,24 @@ function getSessionId(c: Context<{ Bindings: Env }>): string | null {
   return match ? match[1] : null;
 }
 
-function isAuthenticated(c: Context<{ Bindings: Env }>): boolean {
+async function isAuthenticated(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  // 1) Cookie session（内存，向后兼容）
   const sessionId = getSessionId(c);
-  if (!sessionId) return false;
-  
-  const session = sessions.get(sessionId);
-  if (!session) return false;
-  
-  // 检查是否过期
-  if (Date.now() - session.createdAt > SESSION_MAX_AGE) {
-    sessions.delete(sessionId);
-    return false;
+  if (sessionId) {
+    const session = sessions.get(sessionId);
+    if (session && Date.now() - session.createdAt <= SESSION_MAX_AGE) {
+      return true;
+    }
+    if (session) sessions.delete(sessionId);
   }
-  
-  return true;
+  // 2) X-Admin-Password 头（无状态，与 /api/file/* 同一套鉴权；Workers isolate 无内存态，session 不可靠必须走头）
+  const headerPw = c.req.header('X-Admin-Password');
+  if (headerPw) {
+    try { await loadXlsxConfig(c, false); } catch { /* 配置加载失败按未授权处理 */ }
+    const adminPassword = xlsxConfig.getConfig('admin_password') || '';
+    if (adminPassword && constantTimeCompare(headerPw, adminPassword)) return true;
+  }
+  return false;
 }
 
 // POST /api/admin/login
@@ -97,7 +101,7 @@ export async function handleLogout(c: Context<{ Bindings: Env }>) {
 
 // GET /api/admin/config?path=/xxx
 export async function handleGetConfig(c: Context<{ Bindings: Env }>) {
-  if (!isAuthenticated(c)) {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: '未授权' }, 401);
   }
   
@@ -126,7 +130,7 @@ export async function handleGetConfig(c: Context<{ Bindings: Env }>) {
 
 // POST /api/admin/config
 export async function handleSetConfig(c: Context<{ Bindings: Env }>) {
-  if (!isAuthenticated(c)) {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: '未授权' }, 401);
   }
   
@@ -153,7 +157,7 @@ export async function handleSetConfig(c: Context<{ Bindings: Env }>) {
 
 // POST /api/admin/save
 export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
-  if (!isAuthenticated(c)) {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: '未授权' }, 401);
   }
   

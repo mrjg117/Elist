@@ -3,6 +3,7 @@ import type { Env, Entry, Mount, MountConfig } from '../types';
 import { dispatch } from '../lib/dispatch';
 import {
   checkPathPassword,
+  constantTimeCompare,
   filterHidden,
   isHidden,
   MARKER_FILES,
@@ -282,6 +283,15 @@ function sortEntries<T extends Entry>(entries: T[], spec?: string): T[] {
  * 根目录(/)返回盘列表；其余返回目录列表 + 级联门禁 + 隐藏过滤 + 排序 + 内存缓存。
  * 密码经 X-Folder-Password 请求头传递（可多个），不进 URL。
  */
+/** 管理员请求（X-Admin-Password 头 == admin_password，无状态）。管理员可见隐藏目录并带标记。 */
+async function isAdminRequest(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  const headerPw = c.req.header('X-Admin-Password');
+  if (!headerPw) return false;
+  try { await loadXlsxConfig(c, false); } catch { return false; }
+  const adminPassword = xlsxConfig.getConfig('admin_password') || '';
+  return !!adminPassword && constantTimeCompare(headerPw, adminPassword);
+}
+
 export async function handleList(c: Context<{ Bindings: Env }>) {
   const path = normalize(c.req.query('path') || '/');
   const pws = collectPws(c);
@@ -289,25 +299,26 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
 
   // 首次访问或强制刷新时加载 .elist.xlsx 配置
   await loadXlsxConfig(c, fresh);
+  const admin = await isAdminRequest(c);
 
-  // 根目录：展示盘列表（从 xlsx 配置读取隐藏状态）
+  // 根目录：展示盘列表（管理员可见隐藏盘并带标记；普通浏览过滤）
   if (path === '/' || path === '') {
     const roots = getRoots(c.env);
     // 检查每个挂载根路径是否隐藏（从 xlsx 配置读取）
     const visibleRoots = await Promise.all(
       roots.map(async (r) => {
         const hidden = await isHidden(r.path, undefined, fresh);
-        return { root: r, hidden };
+        const locked = !!(await xlsxConfig.getPassword(r.path));
+        return { root: r, hidden, locked };
       })
     );
-    const result = visibleRoots
-      .filter((v) => !v.hidden)
-      .map((v) => ({
-        name: v.root.title || v.root.path,
-        path: v.root.path,
-        isDir: true,
-      }));
-    return c.json(result);
+    const result = visibleRoots.map((v) => ({
+      name: v.root.title || v.root.path,
+      path: v.root.path,
+      isDir: true,
+      ...(admin ? { hidden: v.hidden, locked: v.locked } : {}),
+    }));
+    return c.json(admin ? result : result.filter((v) => !v.hidden));
   }
 
   const { driver, rest, mount } = await dispatch(c.env, path);
@@ -323,7 +334,20 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     entries = await driver.list(rest);
     setListing(cacheKey, entries);
   }
-  let visible = await filterHidden(path, entries, readText, fresh);
+  let visible;
+  if (admin) {
+    // 管理员：不过滤隐藏，逐条带 hidden/locked 标记（前端显示 👁/🔒 徽标）
+    visible = [];
+    for (const e of entries) {
+      visible.push({
+        ...e,
+        hidden: await isHidden(e.path, undefined, fresh),
+        locked: !!(await xlsxConfig.getPassword(e.path)),
+      });
+    }
+  } else {
+    visible = await filterHidden(path, entries, readText, fresh);
+  }
   visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
   const spec = c.req.query('sort') || 'name_asc';
   const sorted = sortEntries(visible, spec);

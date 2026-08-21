@@ -283,7 +283,6 @@ function render() {
       <main class="main">
         <div class="toolbar">
           <div class="breadcrumb" id="crumbs"></div>
-          <button class="btn" id="up" title="上一级">${ICON.up}<span>向上</span></button>
           <div class="search"><input id="search" placeholder="搜索当前目录…" value="${esc(state.search)}"/></div>
           <div class="seg" id="viewseg">
             <button data-view="list" class="${state.view === 'list' ? 'active' : ''}">${ICON.list}<span>列表</span></button>
@@ -392,9 +391,10 @@ async function ensureExpanded(box, targetPath) {
   }
 }
 
-// 树跟随当前目录：把高亮项滚动到侧栏可见位置（仅树内滚动）
+// 树跟随当前目录：把最深高亮项滚动到侧栏可见位置（仅树内滚动）
 function scrollTreeToActive() {
-  const btn = document.querySelector('#drives .drive.active');
+  const btns = document.querySelectorAll('#drives .drive.active');
+  const btn = btns[btns.length - 1]; // 取最深匹配（盘符与子目录可能同时 active）
   if (btn) btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
@@ -430,13 +430,17 @@ function itemActionsHtml(entry) {
   return `<button class="btn sm row-menu" data-act="menu" data-path="${esc(entry.path)}" title="操作">${ICON.menu}</button>`;
 }
 
+// 隐藏/加密徽标（管理员可见隐藏目录时显示）
+function badgesHtml(e) {
+  return (e.hidden ? '<span class="badge" title="已隐藏">👁</span>' : '') +
+         (e.locked ? '<span class="badge" title="已加密">🔒</span>' : '');
+}
+
 function renderList() {
-  const upRow = state.path !== '/' ? `<tr class="row up-row" data-up="1">
-    <td class="name" colspan="4"><span class="label">${ICON.up}<span class="txt">..</span></span></td></tr>` : '';
   const rows = state.entries.map((e) => {
     const ic = entryIcon(e);
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span></span></td>
+      <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
       <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
       <td class="mod">${esc(fmtDate(e.modified))}</td>
       <td class="acts">${itemActionsHtml(e)}</td>
@@ -447,35 +451,26 @@ function renderList() {
       <th data-sort="name">名称</th><th data-sort="size">大小</th>
       <th data-sort="time">修改时间</th><th></th>
     </tr></thead>
-    <tbody>${upRow}${rows}</tbody>
+    <tbody>${rows}</tbody>
   </table>`;
 }
 
 function renderGrid() {
-  const upCard = state.path !== '/' ? `<div class="card up-card" data-up="1">
-    <div class="thumb">${ICON.up}</div>
-    <div class="name">..</div>
-    <div class="meta">上级目录</div>
-  </div>` : '';
   const cards = state.entries.map((e) => {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
     const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
-      <div class="name">${esc(e.name)}</div>
+      <div class="name">${esc(e.name)}${badgesHtml(e)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
       ${menu}
     </div>`;
   }).join('');
-  return `<div class="grid">${upCard}${cards}</div>`;
+  return `<div class="grid">${cards}</div>`;
 }
 
 function bindItems(c) {
-  // ".." 返回上级
-  c.querySelectorAll('[data-up]').forEach((el) => {
-    el.onclick = () => { if (state.path !== '/') browse(parentDir(state.path), { fresh: true }); };
-  });
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
@@ -500,22 +495,29 @@ function bindItems(c) {
   });
 }
 
-// 网格卡片 ⋯ 操作菜单（避免 4 按钮在窄卡片上出界）
+// 网格卡片 ⋯ 操作菜单（盘符挂载根禁用移动/重命名/删除——移动根=整盘改名移走，危险）
+function isDriveRoot(path) {
+  return state.drives.some((d) => d.path === path);
+}
 function entryMenu(entry) {
+  const driveRoot = isDriveRoot(entry.path);
+  const opButtons = driveRoot
+    ? `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>`
+    : `<button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
+       <button class="btn block" data-op="move">${ICON.move}<span>移动</span></button>
+       <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>
+       <button class="btn block danger" data-op="delete">${ICON.del}<span>删除</span></button>`;
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>${esc(entry.name)}</h3>
-    <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
-      <button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
-      <button class="btn block" data-op="move">${ICON.move}<span>移动</span></button>
-      <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>
-      <button class="btn block danger" data-op="delete">${ICON.del}<span>删除</span></button>
-    </div>`;
+    <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">${opButtons}</div>`;
   const bd = openModal(m);
-  m.querySelector('[data-op="rename"]').onclick = () => { closeModal(bd); doRename(entry); };
-  m.querySelector('[data-op="move"]').onclick = () => { closeModal(bd); doMove(entry); };
+  if (!driveRoot) {
+    m.querySelector('[data-op="rename"]').onclick = () => { closeModal(bd); doRename(entry); };
+    m.querySelector('[data-op="move"]').onclick = () => { closeModal(bd); doMove(entry); };
+    m.querySelector('[data-op="delete"]').onclick = () => { closeModal(bd); doDelete(entry); };
+  }
   m.querySelector('[data-op="hide"]').onclick = () => { closeModal(bd); setFolderPassword(entry.path); };
-  m.querySelector('[data-op="delete"]').onclick = () => { closeModal(bd); doDelete(entry); };
 }
 
 function bindSidebar() {
@@ -531,7 +533,6 @@ function bindToolbar() {
   const sortsel = document.getElementById('sortsel');
   sortsel.onchange = () => { state.sort = sortsel.value; localStorage.setItem('elist.sort', state.sort); browse(state.path, { fresh: true }); };
   document.getElementById('refresh').onclick = () => browse(state.path, { fresh: true });
-  document.getElementById('up').onclick = () => { if (state.path !== '/') browse(parentDir(state.path), { fresh: true }); };
   document.getElementById('theme').onclick = toggleTheme;
   document.getElementById('admin').onclick = () => state.admin ? adminMenu() : login();
 
@@ -664,21 +665,11 @@ function adminMenu() {
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>管理员</h3>
-    <div class="field"><div class="notice">已登录。可管理当前目录密码、隐藏目录、新建文件夹，或重命名/移动/删除文件（列表条目右侧按钮常显）。</div></div>
+    <div class="field"><div class="notice">已登录。新建文件夹在工具栏「新建」；目录密码/隐藏/重命名/移动/删除在条目右侧 ⋯ 菜单操作；设置与保存均自动回写。</div></div>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
-      <button class="btn block" id="setpw">${ICON.lock}<span>设置当前目录密码</span></button>
-      <button class="btn block" id="newfolder">${ICON.newfolder}<span>新建文件夹</span></button>
-      <button class="btn block" id="savecfg">${ICON.grid}<span>保存配置</span></button>
       <button class="btn block danger" id="logout">${ICON.del}<span>登出</span></button>
     </div>`;
   const bd = openModal(m);
-  m.querySelector('#setpw').onclick = () => { closeModal(bd); setFolderPassword(state.path); };
-  m.querySelector('#newfolder').onclick = () => { closeModal(bd); doMkdir(); };
-  m.querySelector('#savecfg').onclick = async () => {
-    closeModal(bd);
-    try { await apiSend('/api/admin/save', {}, { admin: true }); alertModal('已保存', '配置已写回 .elist.xlsx。', 'ok'); }
-    catch (e) { alertModal('保存失败', e.message, 'danger'); }
-  };
   m.querySelector('#logout').onclick = () => {
     closeModal(bd);
     state.admin = false; state.adminPw = '';

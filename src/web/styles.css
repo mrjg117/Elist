@@ -272,7 +272,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 }
 .side-head .logo svg { width: 18px; height: 18px; }
 /* 卡片缩略图：大图标但受控 */
-.card .thumb svg { width: 44px; height: 44px; }
+.card .thumb svg { width: 56px; height: 56px; }
 .drive svg, .side-foot .btn svg { width: 20px; height: 20px; }
 
 /* ---------------- 浮动操作按钮 ---------------- */
@@ -488,3 +488,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 
 /* 卡片 hover 微调 */
 .card:hover { box-shadow: var(--shadow); }
+
+/* 隐藏/加密徽标 */
+.badge { margin-left: 6px; font-size: 12px; opacity: 0.85; vertical-align: -1px; white-space: nowrap; }
+.badge + .badge { margin-left: 3px; }

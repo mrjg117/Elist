@@ -30,4 +30,4 @@
 - **修复**：PROPFIND 分支传参改为 `buildPropfind(baseUrl, storagePath, children, isDir, isDir)`，并实现 RFC 4918 `Depth:0` 语义（目录只返回自身不列子项，文件始终返回自身）。联动修复 `49bd6e4` 提交引入的回归：WebDAV PUT 二进制上传损坏、PROPFIND 文件条目丢失 size/modified。
 - **验证**：`tsc --noEmit` 零错误；`wrangler deploy` 成功（代码 + 静态资产 + cron）；线上首页正常渲染挂载盘。
 
-> 注：上述 webdav.ts 类型修复、fs.ts user_id 修复、fs.ts 自动创建 .elist.xlsx 修复，均已随本轮一并 commit 并 `git push` 至 `origin/master`；CF 侧已重新 `wrangler deploy` 上线。
+> 注：上述 webdav.ts 类型修复、fs.ts user_id 修复、fs.ts 自动创建 .elist.xlsx 修复，均已随本轮一并 commit 并 `git push` 至 `origin/main`；CF 侧已重新 `wrangler deploy` 上线。

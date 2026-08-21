@@ -496,7 +496,8 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .badge + .badge { margin-left: 5px; }
 
 /* ================= 批量选择 ================= */
-.batch-bar { display: inline-flex; align-items: center; gap: 6px; }
+.batch-bar { display: inline-flex; align-items: center; gap: 5px; }
+.batch-bar .btn { padding: 4px 9px; font-size: 12px; }
 .list .ck { width: 26px; padding: 0 4px; }
 .list .ckbox, .card-ck .ckbox { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 .card-ck { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 4px; background: var(--bg-elev); border-radius: 6px; }

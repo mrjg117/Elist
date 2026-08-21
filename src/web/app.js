@@ -304,7 +304,7 @@ function render() {
         <div class="content" id="content"></div>
       </main>
     </div>
-    ${state.selected.size ? `<div class="float-batch" id="floatbatch">
+    ${state.view === 'grid' && state.selected.size ? `<div class="float-batch" id="floatbatch">
       <span class="fb-count" id="fb-count">已选 ${state.selected.size}</span>
       <button class="btn sm" id="selall">全选</button>
       <button class="btn sm" id="selinv">反选</button>
@@ -380,10 +380,16 @@ function renderList() {
     </tr>`;
   }).join('');
   const allChecked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
+  const headBatch = state.selected.size ? ` <span class="head-batch">
+      <button class="btn sm" data-batch="inv">反选</button>
+      <button class="btn sm" data-batch="link">复制链接</button>
+      <button class="btn sm primary" data-batch="dl">下载(${state.selected.size})</button>
+      <button class="btn sm ghost" data-batch="clear">✕</button>
+    </span>` : '';
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th data-sort="name">名称</th><th data-sort="size">大小</th>
+      <th data-sort="name">名称${headBatch}</th><th data-sort="size">大小</th>
       <th data-sort="time">修改时间</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -424,6 +430,19 @@ function bindItems(c) {
     else state.entries.forEach((e) => state.selected.delete(e.path));
     updateBatchUI();
   };
+  // 表头批量按钮（名称列右侧：反选/复制链接/下载/清空）
+  c.querySelectorAll('[data-batch]').forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      const op = btn.dataset.batch;
+      if (op === 'inv') {
+        state.entries.forEach((e) => { state.selected.has(e.path) ? state.selected.delete(e.path) : state.selected.add(e.path); });
+        updateBatchUI();
+      } else if (op === 'link') copySelectedLinks();
+      else if (op === 'dl') downloadSelected();
+      else if (op === 'clear') { state.selected.clear(); updateBatchUI(); }
+    };
+  });
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
@@ -459,7 +478,7 @@ function entryMenu(entry) {
     ? `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>`
     : `<button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
        <button class="btn block" data-op="move">${ICON.move}<span>移动</span></button>
-       <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>
+       <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>
        <button class="btn block danger" data-op="delete">${ICON.del}<span>删除</span></button>`;
   const m = document.createElement('div');
   m.className = 'modal';
@@ -720,11 +739,19 @@ async function doDelete(entry) {
 
 // ---------------- 批量选择 ----------------
 function updateBatchUI() {
-  // 底部浮动条：显隐 + 数量；行复选框与表头全选同步
+  // 网格底部浮动条
   const fb = document.getElementById('floatbatch');
   const cnt = document.getElementById('fb-count');
   if (cnt) cnt.textContent = `已选 ${state.selected.size}`;
   if (fb) fb.style.display = state.selected.size ? 'flex' : 'none';
+  // 列表表头批量按钮（名称右侧）：需要显示/隐藏时整表重渲染
+  const hb = document.querySelector('.list .head-batch');
+  if ((state.selected.size > 0) !== !!hb) { render(); return; }
+  if (hb) {
+    const dl = hb.querySelector('[data-batch="dl"]');
+    if (dl) dl.textContent = `下载(${state.selected.size})`;
+  }
+  // 行复选框与全选状态同步
   document.querySelectorAll('.content .ckbox').forEach((cb) => { cb.checked = state.selected.has(cb.dataset.path); });
   const all = document.querySelector('.list .ckall');
   if (all) all.checked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
@@ -1109,13 +1136,25 @@ function parseZipEntries(cd) {
   const dv = new DataView(cd.buffer, cd.byteOffset);
   while (pos + 46 <= cd.length && dv.getUint32(pos, true) === 0x02014b50) {
     const nameLen = dv.getUint16(pos + 28, true);
+    const extraLen = dv.getUint16(pos + 30, true);
+    let compSize = dv.getUint32(pos + 20, true);
+    let localOffset = dv.getUint32(pos + 42, true);
+    // zip64 条目级：0xFFFFFFFF 字段 → extra field(0x0001) 中按序取实际 64 位值
+    if (compSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
+      const extra = cd.subarray(pos + 46 + nameLen, pos + 46 + nameLen + extraLen);
+      const zdv = new DataView(extra.buffer, extra.byteOffset);
+      let ei = (extra.length >= 4 && zdv.getUint16(0, true) === 0x0001) ? 4 : 0;
+      if (dv.getUint32(pos + 24, true) === 0xFFFFFFFF && ei + 8 <= extra.length) ei += 8; // uncompSize
+      if (compSize === 0xFFFFFFFF && ei + 8 <= extra.length) { compSize = Number(zdv.getBigUint64(ei, true)); ei += 8; }
+      if (localOffset === 0xFFFFFFFF && ei + 8 <= extra.length) { localOffset = Number(zdv.getBigUint64(ei, true)); ei += 8; }
+    }
     entries.push({
       name: new TextDecoder().decode(cd.subarray(pos + 46, pos + 46 + nameLen)),
       method: dv.getUint16(pos + 10, true),
-      compSize: dv.getUint32(pos + 20, true),
-      localOffset: dv.getUint32(pos + 42, true),
+      compSize,
+      localOffset,
     });
-    pos += 46 + nameLen + dv.getUint16(pos + 30, true) + dv.getUint16(pos + 32, true);
+    pos += 46 + nameLen + extraLen + dv.getUint16(pos + 32, true);
   }
   return entries;
 }
@@ -1125,12 +1164,27 @@ function findEocd(buf) {
   }
   return -1;
 }
-function parseZipBuffer(buf) {
+// 解析 EOCD 得到中央目录范围，支持 zip64（cdSize/cdOffset 为 0xFFFFFFFF 时经 locator 找 zip64 EOCD）
+function eocdCdRange(buf) {
   const eocd = findEocd(buf);
   if (eocd < 0) throw new Error('bad-zip');
   const dv = new DataView(buf.buffer, buf.byteOffset);
-  const cdSize = dv.getUint32(eocd + 12, true);
-  const cdOffset = dv.getUint32(eocd + 16, true);
+  let cdSize = dv.getUint32(eocd + 12, true);
+  let cdOffset = dv.getUint32(eocd + 16, true);
+  if (cdSize === 0xFFFFFFFF || cdOffset === 0xFFFFFFFF) {
+    const loc = eocd - 20;
+    if (loc >= 0 && dv.getUint32(loc, true) === 0x07064b50) {
+      const z64off = Number(dv.getBigUint64(loc + 8, true));
+      if (z64off + 56 <= buf.length && dv.getUint32(z64off, true) === 0x06064b50) {
+        cdSize = Number(dv.getBigUint64(z64off + 40, true));
+        cdOffset = Number(dv.getBigUint64(z64off + 48, true));
+      }
+    }
+  }
+  return { cdOffset, cdSize };
+}
+function parseZipBuffer(buf) {
+  const { cdOffset, cdSize } = eocdCdRange(buf);
   return parseZipEntries(buf.subarray(cdOffset, cdOffset + cdSize));
 }
 async function listZipByRange(url) {
@@ -1138,8 +1192,22 @@ async function listZipByRange(url) {
   const eocd = findEocd(tail);
   if (eocd < 0) throw new Error('bad-zip');
   const dv = new DataView(tail.buffer, tail.byteOffset);
-  const cdSize = dv.getUint32(eocd + 12, true);
-  const cdOffset = dv.getUint32(eocd + 16, true);
+  let cdSize = dv.getUint32(eocd + 12, true);
+  let cdOffset = dv.getUint32(eocd + 16, true);
+  if (cdSize === 0xFFFFFFFF || cdOffset === 0xFFFFFFFF) {
+    const loc = eocd - 20;
+    if (loc >= 0 && dv.getUint32(loc, true) === 0x07064b50) {
+      const z64off = Number(dv.getBigUint64(loc + 8, true));
+      try {
+        const z64 = await fetchWithRange(url, `bytes=${z64off}-${z64off + 55}`);
+        if (z64.length >= 56 && new DataView(z64.buffer, z64.byteOffset).getUint32(0, true) === 0x06064b50) {
+          const zdv = new DataView(z64.buffer, z64.byteOffset);
+          cdSize = Number(zdv.getBigUint64(40, true));
+          cdOffset = Number(zdv.getBigUint64(48, true));
+        }
+      } catch { /* 保留原值尝试 */ }
+    }
+  }
   const cd = await fetchWithRange(url, `bytes=${cdOffset}-${cdOffset + cdSize - 1}`);
   return parseZipEntries(cd);
 }

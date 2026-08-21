@@ -48,11 +48,9 @@ const state = {
   search: '',
   drives: [],
   showHidden: false,
+  selectMode: false,
+  selected: new Set(),
 };
-
-// 侧栏树展开状态与子树缓存（render() 重建 DOM 后恢复）
-const treeExpanded = new Set();
-const treeCache = new Map();
 
 // ---------------- 工具 ----------------
 const enc = encodeURIComponent;
@@ -175,7 +173,10 @@ async function handleRes(res) {
   return ct.includes('application/json') ? res.json() : res.text();
 }
 async function apiGet(url) {
-  return handleRes(await fetch(url, { headers: pwHeader() }));
+  const headers = pwHeader();
+  // 已登录管理员：带头，后端放行隐藏目录并返回 hidden/locked 标记
+  if (state.adminPw) headers['X-Admin-Password'] = state.adminPw;
+  return handleRes(await fetch(url, { headers }));
 }
 async function apiSend(url, body, { admin = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -299,6 +300,13 @@ function render() {
             <option value="type_desc"${state.sort === 'type_desc' ? ' selected' : ''}>类型 ↓</option>
           </select>
           <button class="btn" id="refresh" title="刷新">刷新</button>
+          ${state.selectMode ? `<div class="batch-bar">
+            <button class="btn sm" id="selall">全选</button>
+            <button class="btn sm" id="selinv">反选</button>
+            <button class="btn sm" id="sellink">复制链接</button>
+            <button class="btn sm primary" id="seldl">下载(${state.selected.size})</button>
+            <button class="btn sm ghost" id="selx">退出</button>
+          </div>` : `<button class="btn" id="select" title="批量选择">☑ 选择</button>`}
           ${state.admin ? `<button class="btn primary" id="newfolder">${ICON.newfolder}<span>新建</span></button>` : ''}
         </div>
         <div class="content" id="content"></div>
@@ -308,94 +316,17 @@ function render() {
   renderCrumbs();
   renderContent();
   bindToolbar();
-  ensureExpanded(document.getElementById('drives'), state.path).then(scrollTreeToActive);
 }
 
 function renderDrives() {
   const box = document.getElementById('drives');
-  const home = `<div class="tree-node"><button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/">${ICON.home}<span class="name">根目录</span></button></div>`;
+  const home = `<button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/">${ICON.home}<span class="name">根目录</span></button>`;
   const items = state.drives.map((d) => {
     const active = state.path === d.path || state.path.startsWith(d.path + '/') ? 'active' : '';
-    const chHtml = treeExpanded.has(d.path) && treeCache.has(d.path) ? treeCache.get(d.path).html : '';
-    return `<div class="tree-node">
-      <button class="drive ${active}" data-path="${esc(d.path)}">
-        <span class="twist" data-twist="${esc(d.path)}">${treeExpanded.has(d.path) ? '▾' : '▸'}</span>
-        ${ICON.drive}<span class="name">${esc(d.name)}</span>
-      </button>
-      <div class="tree-children" data-children="${esc(d.path)}">${chHtml}</div>
-    </div>`;
+    return `<button class="drive ${active}" data-path="${esc(d.path)}">${ICON.drive}<span class="name">${esc(d.name)}</span></button>`;
   }).join('');
   box.innerHTML = home + items;
-  bindTree(box);
-}
-
-async function loadTreeChildren(path, box) {
-  // 轻量加载：不在侧栏显示"加载中/空目录"文字，加载统一由主内容区居中提示承担
-  box.innerHTML = '';
-  let data;
-  try { data = await apiGet(`/api/list?path=${enc(path)}`); }
-  catch { return; }
-  const dirs = (Array.isArray(data) ? data : []).filter((x) => x.isDir);
-  if (!dirs.length) return;
-  const html = dirs.map((d) => {
-    const full = joinPath(path, d.name);
-    const active = state.path === full || state.path.startsWith(full + '/') ? 'active' : '';
-    const chHtml = treeExpanded.has(full) && treeCache.has(full) ? treeCache.get(full).html : '';
-    return `<div class="tree-node">
-      <button class="drive ${active}" data-path="${esc(full)}">
-        <span class="twist" data-twist="${esc(full)}">${treeExpanded.has(full) ? '▾' : '▸'}</span>
-        ${ICON.dir}<span class="name">${esc(d.name)}</span>
-      </button>
-      <div class="tree-children" data-children="${esc(full)}">${chHtml}</div>
-    </div>`;
-  }).join('');
-  treeCache.set(path, { html });
-  box.innerHTML = html;
-  bindTree(box);
-}
-
-function bindTree(box) {
-  box.querySelectorAll('.drive[data-path]').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
-  box.querySelectorAll('.twist').forEach((t) => {
-    t.onclick = (ev) => {
-      ev.stopPropagation();
-      const p = t.dataset.twist;
-      const ch = box.querySelector(`[data-children="${CSS.escape(p)}"]`);
-      if (treeExpanded.has(p)) {
-        treeExpanded.delete(p); treeCache.delete(p); t.textContent = '▸';
-        if (ch) ch.innerHTML = '';
-      } else {
-        treeExpanded.add(p); t.textContent = '▾';
-        if (ch) loadTreeChildren(p, ch);
-      }
-    };
-  });
-}
-
-// 导航后自动展开侧栏祖先链
-async function ensureExpanded(box, targetPath) {
-  if (!box) return;
-  for (const node of box.querySelectorAll(':scope > .tree-node')) {
-    const btn = node.querySelector(':scope > .drive[data-path]');
-    if (!btn) continue;
-    const p = btn.dataset.path;
-    if (targetPath === p || targetPath.startsWith(p + '/')) {
-      const twist = node.querySelector(':scope > .drive .twist');
-      const ch = node.querySelector(':scope > .tree-children');
-      if (twist && ch && !treeExpanded.has(p)) {
-        treeExpanded.add(p); twist.textContent = '▾';
-        await loadTreeChildren(p, ch);
-      }
-      if (ch) await ensureExpanded(ch, targetPath);
-    }
-  }
-}
-
-// 树跟随当前目录：把最深高亮项滚动到侧栏可见位置（仅树内滚动）
-function scrollTreeToActive() {
-  const btns = document.querySelectorAll('#drives .drive.active');
-  const btn = btns[btns.length - 1]; // 取最深匹配（盘符与子目录可能同时 active）
-  if (btn) btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  box.querySelectorAll('.drive').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
 }
 
 function renderCrumbs() {
@@ -414,7 +345,20 @@ function renderCrumbs() {
 
 function renderContent() {
   const c = document.getElementById('content');
-  if (state.loading) { c.innerHTML = `<div class="state-msg">加载中…</div>`; return; }
+  // 全屏居中加载遮罩（屏幕正中间，侧栏零加载文字）
+  let ov = document.getElementById('global-loading');
+  if (state.loading) {
+    c.innerHTML = '';
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'global-loading';
+      ov.className = 'global-loading';
+      ov.textContent = '加载中…';
+      app.appendChild(ov);
+    }
+    return;
+  }
+  if (ov) ov.remove();
   if (state.error) { c.innerHTML = `<div class="state-msg"><div class="err">${esc(state.error)}</div></div>`; return; }
   if (!state.entries.length) {
     c.innerHTML = `<div class="state-msg"><span class="state-ico">${state.search ? ICON.file : ICON.dir}</span>${state.search ? '无匹配结果' : '空目录'}</div>`;
@@ -439,16 +383,20 @@ function badgesHtml(e) {
 function renderList() {
   const rows = state.entries.map((e) => {
     const ic = entryIcon(e);
+    const ck = state.selectMode
+      ? `<td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>` : '';
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      ${ck}
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
       <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
       <td class="mod">${esc(fmtDate(e.modified))}</td>
       <td class="acts">${itemActionsHtml(e)}</td>
     </tr>`;
   }).join('');
+  const thCk = state.selectMode ? '<th class="ck"></th>' : '';
   return `<table class="list">
     <thead><tr>
-      <th data-sort="name">名称</th><th data-sort="size">大小</th>
+      ${thCk}<th data-sort="name">名称</th><th data-sort="size">大小</th>
       <th data-sort="time">修改时间</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -460,7 +408,10 @@ function renderGrid() {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
     const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
+    const ck = state.selectMode
+      ? `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>` : '';
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      ${ck}
       <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
       <div class="name">${esc(e.name)}${badgesHtml(e)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
@@ -471,9 +422,20 @@ function renderGrid() {
 }
 
 function bindItems(c) {
+  // 多选复选框
+  c.querySelectorAll('.ckbox').forEach((cb) => {
+    cb.onclick = (ev) => ev.stopPropagation();
+    cb.onchange = () => {
+      const p = cb.dataset.path;
+      if (cb.checked) state.selected.add(p);
+      else state.selected.delete(p);
+      updateBatchBar();
+    };
+  });
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
+      if (ev.target.closest('.ckbox')) return;
       const entry = state.entries.find((x) => x.path === el.dataset.path);
       if (!entry) return;
       if (entry.isDir) browse(entry.path);
@@ -538,6 +500,26 @@ function bindToolbar() {
 
   const nf = document.getElementById('newfolder');
   if (nf) nf.onclick = () => doMkdir();
+
+  // 批量选择
+  const selBtn = document.getElementById('select');
+  if (selBtn) selBtn.onclick = () => { state.selectMode = true; render(); };
+  const selx = document.getElementById('selx');
+  if (selx) selx.onclick = () => { state.selectMode = false; state.selected.clear(); render(); };
+  const selall = document.getElementById('selall');
+  if (selall) selall.onclick = () => { state.selected = new Set(state.entries.map((e) => e.path)); render(); };
+  const selinv = document.getElementById('selinv');
+  if (selinv) selinv.onclick = () => {
+    state.entries.forEach((e) => {
+      if (state.selected.has(e.path)) state.selected.delete(e.path);
+      else state.selected.add(e.path);
+    });
+    render();
+  };
+  const sellink = document.getElementById('sellink');
+  if (sellink) sellink.onclick = copySelectedLinks;
+  const seldl = document.getElementById('seldl');
+  if (seldl) seldl.onclick = downloadSelected;
 
   const search = document.getElementById('search');
   let t;
@@ -745,6 +727,47 @@ async function doDelete(entry) {
     await apiSend('/api/file/delete', { path: entry.path }, { admin: true });
     browse(state.path, { fresh: true });
   } catch (e) { alertModal('删除失败', e.message, 'danger'); }
+}
+
+// ---------------- 批量选择 ----------------
+function updateBatchBar() {
+  const b = document.getElementById('seldl');
+  if (b) b.textContent = `下载(${state.selected.size})`;
+}
+async function copySelectedLinks() {
+  const paths = [...state.selected];
+  if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
+  const urls = [];
+  for (const p of paths) {
+    try {
+      const { url } = await apiGet(`/api/link?path=${enc(p)}`);
+      urls.push(url);
+    } catch { /* 单个失败跳过 */ }
+  }
+  if (!urls.length) { alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
+  const text = urls.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    alertModal('已复制', `已复制 ${urls.length} 个链接到剪贴板`, 'ok');
+  } catch {
+    const i = document.createElement('textarea');
+    i.value = text; document.body.appendChild(i); i.select();
+    document.execCommand('copy'); i.remove();
+    alertModal('已复制', `已复制 ${urls.length} 个链接`, 'ok');
+  }
+}
+async function downloadSelected() {
+  const paths = [...state.selected];
+  if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
+  let ok = 0;
+  for (const p of paths) {
+    try {
+      const { url } = await apiGet(`/api/link?path=${enc(p)}`);
+      window.open(url, '_blank');
+      ok++;
+    } catch { /* 跳过 */ }
+  }
+  alertModal('已触发', `已为 ${ok}/${paths.length} 个文件打开下载（若被浏览器拦截请用复制链接）`, 'ok');
 }
 
 // ---------------- 预览 ----------------

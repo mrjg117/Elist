@@ -104,3 +104,13 @@
 - **树跟随修正**：`scrollTreeToActive` 改取最后一个 active（盘符与子目录可能同时高亮，取最深），滚动更准。
 - **网格图标加大**：卡片缩略图 SVG 44px → 56px，与 92px 缩略图协调。
 - **验证**：`node --check` + `tsc --noEmit` 零错误。
+
+### 修复+增强：隐藏目录显示根治（前端带头）/ 导航降级为挂载盘 / 全屏加载遮罩 / 批量选择
+
+- **隐藏目录「依然不显示」根治**：上轮后端已放行管理员（`isAdminRequest` 读 `X-Admin-Password` 头），但前端 `apiGet` 只带目录密码头、从不带管理员头，登录后 list 请求仍被当非管理员 → 隐藏继续被过滤。修复：`apiGet` 在已登录（`state.adminPw` 非空）时自动带 `X-Admin-Password` 头。
+- **左侧导航降级为只显示挂载盘（用户拍板）**：树形导航横向（兄弟）目录默认不可见、且需手动展开，用户确认无免费获取横向的办法后，按兜底方案**删除整棵目录树**（`loadTreeChildren`/`bindTree`/`ensureExpanded`/`scrollTreeToActive`/展开缓存全部移除），侧栏只保留挂载盘 + 根目录按钮（点击跳转、当前盘高亮）。侧栏从此零加载文字、零跟随问题。
+- **全屏加载遮罩**：主区 loading 由 content 区 60vh 提示改为**全屏居中遮罩**（fixed 半透明 + 居中「加载中…」，`#global-loading`），屏幕正中间。
+- **批量选择（新功能）**：工具栏「☑ 选择」进入选择模式 → 列表/网格条目出现复选框 → 批量条：**全选 / 反选 / 复制链接 / 下载(N) / 退出**。复制链接逐个拉直链换行拼接到剪贴板；下载逐个触发（浏览器拦截时提示改用复制链接）。
+- **列表垂直居中强化**：`.row td` 垂直居中 + `.label` inline-flex + line-height 固定 + `.glyph` line-height:0，图标与文字严格对齐。
+- **图片默认适应窗口**：`.image-container img` 加 `object-fit: contain`（大图打开即完整显示不裁切）。
+- **验证**：`node --check` + `tsc --noEmit` 零错误。

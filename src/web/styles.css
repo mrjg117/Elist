@@ -492,3 +492,26 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 /* 隐藏/加密徽标 */
 .badge { margin-left: 6px; font-size: 12px; opacity: 0.85; vertical-align: -1px; white-space: nowrap; }
 .badge + .badge { margin-left: 3px; }
+
+/* ================= 全屏加载遮罩 ================= */
+.global-loading {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.35); color: var(--text);
+  font-size: 14px; letter-spacing: 0.5px;
+  backdrop-filter: blur(1px);
+}
+
+/* ================= 批量选择 ================= */
+.batch-bar { display: inline-flex; align-items: center; gap: 6px; }
+.list .ck { width: 34px; padding-right: 4px; }
+.list .ckbox, .card-ck .ckbox { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.card-ck { position: absolute; top: 6px; left: 8px; z-index: 3; }
+
+/* 列表行垂直居中强化 */
+.row td { vertical-align: middle; }
+.row .name .label { display: inline-flex; align-items: center; line-height: 1; }
+.row .name .label .glyph { line-height: 0; }
+
+/* 图片默认适应预览窗口 */
+.image-container img { object-fit: contain; }

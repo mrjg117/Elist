@@ -39,7 +39,8 @@ not_found_handling = "single-page-application"
 # 公用变量（非敏感，可明文；也可 secret）
 [vars]
 SITE_TITLE = "Elist"
-CACHE_CONTROL = "public, max-age=300"
+# 资产缓存：no-cache 强制浏览器每次校验，部署后刷新即见最新版（避免"看不到改动"）
+CACHE_CONTROL = "public, max-age=0, must-revalidate"
 # MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
 # S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
 

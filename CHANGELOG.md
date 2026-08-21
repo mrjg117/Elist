@@ -31,3 +31,22 @@
 - **验证**：`tsc --noEmit` 零错误；`wrangler deploy` 成功（代码 + 静态资产 + cron）；线上首页正常渲染挂载盘。
 
 > 注：上述 webdav.ts 类型修复、fs.ts user_id 修复、fs.ts 自动创建 .elist.xlsx 修复，均已随本轮一并 commit 并 `git push` 至 `origin/main`；CF 侧已重新 `wrangler deploy` 上线。
+
+### 修复/增强：管理员密码纯表控制（自动键空值 + 空密码拦截）
+
+- **设计（用户拍板）**：不引入 `ADMIN_PASSWORD` 环境变量、不做首次引导/设置向导。管理员密码完全由 `.elist.xlsx` 的 config 工作表控制——自动建表或缺项时自动键入该键、默认空；用户手动改表把值填上，再登录。
+- **自动键刚需配置项**：`src/lib/xlsx-config.ts` 新增 `DEFAULT_CONFIG = { admin_password: '' }` 与 `ensureDefaultConfig()`，并在 `generateXlsx()`（自动建表/保存）与 `parseXlsx()`（加载已有表）两处调用。新建或老表缺 `admin_password` 键时自动补入空字符串默认值，且标脏以便下次保存落盘。
+- **空密码拦截登录**：`src/routes/admin.ts` 的 `handleLogin` 改为读取 `admin_password`（恒存在，空即“未设置”），为空时返回 `401 {error:'密码未设置'}`，不允许登录。用户在 `.elist.xlsx` config 表把 `admin_password` 设为非空值并保存后即可正常登录。
+- **验证**：`tsc --noEmit` 零错误。
+
+### 重写：前端 UI（零构建原生 SPA）
+
+- **动机**：原 `src/web/app.js`（手写、丑、缺控制按钮、音视频无进度条、文件操作接口未接）。目标：性能优先 + 外观精致 + 功能全。
+- **方案**：零构建原生 SPA（`src/web/index.html` + `styles.css` + `app.js`），静态 CSS（深/浅双主题，无运行时 CSS-in-JS，首屏即样式），无框架运行时，首屏最快。音视频预览本地 vendored `plyr`（懒加载，仅预览时注入脚本/样式），失败自动回退原生 `<video>/<audio>`（自带进度条）。
+- **功能补齐**：
+  - 列表/网格双视图、排序（名称/时间/大小）、面包屑导航、搜索（复用 `/api/search`）、刷新（`fresh=1`）。
+  - 目录密码：403 `password_required` 自动弹密码框，密码随 `X-Folder-Password` 头累积传递。
+  - 管理员：登录（空密码明确提示“请先在 config 表设置 admin_password”）、当前目录密码/隐藏设置、保存配置。
+  - 文件操作打通后端既有 `/api/file/*`：新建文件夹(mkdir)、改名/移动(move)、删除(delete)，全部带 `X-Admin-Password`（此前后端已全实现，仅前端缺失调用）。
+  - 预览：图片/视频/音频/PDF/文本（内联）/其他（下载）；音视频 Plyr 播放器带进度条、音量、全屏。
+- **部署**：`wrangler.toml` 的 `[assets]` 仍指向 `./src/web`，`not_found_handling = "single-page-application"` 不变；构建产物即静态文件，无需额外构建步骤。

@@ -37,6 +37,26 @@ const data: ConfigData = {
   dirty: false,
 };
 
+/**
+ * 刚需全局配置项：自动建表或读取时若缺失，自动补入该键、默认空字符串。
+ * 例如 admin_password——保证「键一定存在」，用户只需手动改表把值填上即可。
+ */
+const DEFAULT_CONFIG: Record<string, string> = {
+  admin_password: '',
+};
+
+/** 确保刚需全局配置项存在（缺失则补空值并标脏，下次保存落盘）。 */
+export function ensureDefaultConfig(): void {
+  let changed = false;
+  for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
+    if (!data.config.has(key)) {
+      data.config.set(key, value);
+      changed = true;
+    }
+  }
+  if (changed) data.dirty = true;
+}
+
 /** 从 xlsx 二进制数据解析配置（支持加密） */
 export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
   let xlsxBuffer = buffer;
@@ -97,12 +117,18 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
+  // 老表若缺刚需全局配置项（如 admin_password），内存补键（标脏以便后续落盘）
+  ensureDefaultConfig();
+
   data.loaded = true;
   data.dirty = false;
 }
 
 /** 将内存配置生成 xlsx 二进制（支持加密） */
 export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
+  // 生成前确保刚需全局配置项（如 admin_password）已存在，自动建表时也会带上空值键
+  ensureDefaultConfig();
+
   // 构建 sheets 数据
   const sheets = new Map<string, string[][]>();
 

@@ -64,10 +64,10 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
   
   const { password } = await c.req.json();
   
-  // 从 xlsx 配置获取管理员密码
-  const adminPassword = xlsxConfig.getConfig('admin_password');
+  // 从 xlsx 配置获取管理员密码（ensureDefaultConfig 保证该键恒存在，空值即「未设置」）
+  const adminPassword = xlsxConfig.getConfig('admin_password') || '';
   if (!adminPassword) {
-    return c.json({ error: '管理员密码未配置' }, 500);
+    return c.json({ error: '密码未设置' }, 401);
   }
   
   if (!constantTimeCompare(password, adminPassword)) {

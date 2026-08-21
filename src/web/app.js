@@ -1,1144 +1,585 @@
-// 极简前端 SPA：浏览 + 弹窗密码(X-Folder-Password 头) + 搜索 + 排序 + 预览。
-// 密码不进 URL：经请求头传递，地址栏始终干净。下载/预览走 /api/link 拿直链 JSON。
-const state = { 
-  path: '/', 
-  pwSet: new Set(), 
-  sort: 'name_asc',
-  view: localStorage.getItem('view') || 'list', // 视图模式：list 或 grid
-  sidebarOpen: false
+// ============================================================
+//  Elist 前端 —— 零构建原生 SPA
+//  性能优先：无框架运行时、静态 CSS、Plyr 仅在预览媒体时懒加载，
+//  失败自动回退原生 <video>/<audio>（自带进度条）。
+// ============================================================
+
+const app = document.getElementById('app');
+const modalRoot = document.getElementById('modal-root');
+
+const ICON = {
+  dir: '<svg class="glyph dir" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z"/></svg>',
+  file: '<svg class="glyph file" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/></svg>',
 };
-const PW_HEADER = 'X-Folder-Password';
 
-// 预览库按需加载缓存
-const previewLibs = {};
+const state = {
+  title: 'Elist',
+  path: '/',
+  view: localStorage.getItem('elist.view') || 'list',
+  sort: localStorage.getItem('elist.sort') || 'name_asc',
+  entries: [],
+  passwords: [],
+  admin: false,
+  adminPw: sessionStorage.getItem('elist.adminPw') || '',
+  loading: false,
+  error: null,
+  lockedAt: null,
+  search: '',
+};
 
-// 动态加载库（CDN）
-async function loadLib(name, url) {
-  if (previewLibs[name]) return previewLibs[name];
-  const script = document.createElement('script');
-  script.src = url;
-  document.head.appendChild(script);
-  await new Promise((resolve, reject) => {
-    script.onload = resolve;
-    script.onerror = reject;
-  });
-  previewLibs[name] = window[name];
-  return previewLibs[name];
+// ---------------- 工具 ----------------
+const enc = encodeURIComponent;
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+function ext(name) {
+  const i = name.lastIndexOf('.');
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : '';
 }
-
-function esc(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function basename(p) { const i = p.lastIndexOf('/'); return p.slice(i + 1); }
+function parentDir(p) { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); }
+function joinPath(dir, name) {
+  if (dir === '/' || dir === '') return '/' + name;
+  return dir.replace(/\/$/, '') + '/' + name;
 }
-
-// JS 上下文转义（用于 onclick 等属性内的 JS 字符串）
-// HTML 解析会把 &#39; 还原成 '，所以 JS 字符串要用反斜杠转义
-function jsEsc(s) {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-}
-
-// 客户端已知密码集合：进入受保护层级时弹窗收集，存入 Set。
-// 每个请求把集合内所有密码以重复 X-Folder-Password 头带上，后端逐层校验
-// （父目录 + 子目录各有密码配置时，需两层密码都满足 = 子层重新鉴权）。
-function pwHeaders() {
-  const h = new Headers();
-  for (const pw of state.pwSet) h.append(PW_HEADER, pw);
-  return h;
-}
-
-async function apiList(path, fresh = false) {
-  const params = new URLSearchParams({ path });
-  if (state.sort) params.set('sort', state.sort);
-  if (fresh) params.set('fresh', '1');
-  const r = await fetch('/api/list?' + params.toString(), { headers: pwHeaders() });
-  if (r.status === 403) {
-    const body = await r.json().catch(() => ({}));
-    return { needPassword: true, lockedAt: body.lockedAt, received: body.received };
-  }
-  if (!r.ok) throw new Error('list failed ' + r.status);
-  return { entries: await r.json() };
-}
-
-/** 取文件直链（经 /api/link，密码走头），返回 { url, cacheControl }。 */
-async function getLink(path) {
-  const r = await fetch('/api/link?path=' + encodeURIComponent(path), { headers: pwHeaders() });
-  if (r.status === 403) {
-    const body = await r.json().catch(() => ({}));
-    throw { needPassword: true, lockedAt: body.lockedAt };
-  }
-  if (!r.ok) throw new Error('link failed ' + r.status);
-  return r.json();
-}
-
-/** 弹窗输入密码，返回输入的密码或 null（取消）。hint 为可选诊断提示（显示在输入框下方）。 */
-function askPassword(hintPath, hint) {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('pwModal');
-    const input = document.getElementById('pwInput');
-    const ok = document.getElementById('pwOk');
-    const cancel = document.getElementById('pwCancel');
-    const title = document.getElementById('pwTitle');
-    const hintEl = document.getElementById('pwHint');
-    if (title) title.textContent = hintPath && hintPath !== '/' ? `请输入 ${hintPath} 的密码` : '请输入密码';
-    if (hintEl) hintEl.textContent = hint || '';
-    input.value = '';
-    modal.classList.add('show');
-    input.focus();
-    const done = (val) => {
-      modal.classList.remove('show');
-      ok.onclick = null;
-      cancel.onclick = null;
-      input.onkeydown = null;
-      resolve(val);
-    };
-    ok.onclick = () => done(input.value);
-    cancel.onclick = () => done(null);
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter') done(input.value);
-      else if (e.key === 'Escape') done(null);
-    };
-  });
-}
-
-async function openPath(path, fresh = false, pushUrl = true) {
-  state.path = path;
-  // 更新 URL（不刷新页面）
-  if (pushUrl) {
-    const url = path === '/' ? '/' : path;
-    history.pushState({ path }, '', url);
-  }
-  renderCrumbs();
-  renderTree();
-  const listEl = document.getElementById('list');
-  listEl.innerHTML = '<div class="empty">加载中…</div>';
-  let res;
-  try {
-    res = await apiList(path, fresh);
-  } catch (e) {
-    listEl.innerHTML = `<div class="empty">错误：${esc(e.message)}</div>`;
-    return;
-  }
-  if (res.needPassword) {
-    const hint = res.received
-      ? `服务端已收到 ${res.received} 个密码，仍未解锁 ${res.lockedAt || path}；检查配置或输入的密码。`
-      : '';
-    const pw = await askPassword(res.lockedAt || path, hint);
-    if (pw === null) {
-      listEl.innerHTML = '<div class="empty">已取消</div>';
-      return;
-    }
-    state.pwSet.add(pw);
-    return openPath(path);
-  }
-  // 服务端已排序（文件夹优先），前端不再重排
-  const entries = res.entries;
-  if (!entries.length) {
-    listEl.innerHTML = '<div class="empty">空目录</div>';
-    return;
-  }
-  
-  // 根据视图模式渲染
-  if (state.view === 'grid') {
-    renderGridView(entries, listEl);
-  } else {
-    renderListView(entries, listEl);
-  }
-}
-
-function renderListView(entries, listEl) {
-  listEl.className = 'list-view';
-  listEl.innerHTML = entries
-    .map(
-      (e) => `<div class="row" data-path="${esc(e.path)}" data-dir="${e.isDir}">
-        <div class="ico">${e.isDir ? '📁' : '📄'}</div>
-        <div class="name">${esc(e.name)}</div>
-        <div class="size">${e.isDir ? '' : fmtSize(e.size)}</div>
-      </div>`
-    )
-    .join('');
-  listEl.querySelectorAll('.row').forEach((row, idx) => {
-    row.onclick = () => {
-      const p = row.dataset.path;
-      if (row.dataset.dir === 'true') openPath(p);
-      else preview(p, row.querySelector('.name').textContent, entries[idx]);
-    };
-  });
-}
-
-function renderGridView(entries, listEl) {
-  listEl.className = 'grid-view';
-  listEl.innerHTML = entries
-    .map((e) => {
-      const isImage = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(e.name);
-      // 用 data-src 延迟加载，后续用 fetch 带密码头获取缩略图
-      const thumb = isImage 
-        ? `<img data-src="${esc(e.path)}" class="lazy-thumb" loading="lazy" />`
-        : `<div class="icon">${e.isDir ? '📁' : '📄'}</div>`;
-      return `<div class="grid-item" data-path="${esc(e.path)}" data-dir="${e.isDir}">
-        <div class="thumb">${thumb}</div>
-        <div class="name">${esc(e.name)}</div>
-      </div>`;
-    })
-    .join('');
-  // 用 fetch 加载缩略图，带密码头
-  listEl.querySelectorAll('.lazy-thumb').forEach((img) => {
-    const path = img.dataset.src;
-    loadThumb(path).then(url => {
-      if (url) img.src = url;
-    }).catch(() => {});
-  });
-  listEl.querySelectorAll('.grid-item').forEach((item) => {
-    item.onclick = () => {
-      const p = item.dataset.path;
-      if (item.dataset.dir === 'true') openPath(p);
-      else {
-        const entry = entries.find(e => e.path === p);
-        preview(p, item.querySelector('.name').textContent, entry);
-      }
-    };
-  });
-}
-
-async function loadThumb(path) {
-  const res = await fetch(`/api/link?path=${encodeURIComponent(path)}`, { headers: pwHeaders() });
-  if (!res.ok) return null;
-  const data = await res.json();
-  return data.url || null;
-}
-
-function fmtSize(n) {
-  if (!n) return '';
+function fmtSize(b) {
+  if (b == null) return '';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return n.toFixed(1) + ' ' + u[i];
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return (i === 0 ? b : b.toFixed(b < 10 ? 2 : 1)) + ' ' + u[i];
+}
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  return d.toLocaleString();
+}
+function mediaType(name) {
+  const e = ext(name);
+  if (['mp4', 'webm', 'mkv', 'mov', 'm4v', 'ogv', 'avi'].includes(e)) return 'video';
+  if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus'].includes(e)) return 'audio';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(e)) return 'image';
+  if (['pdf'].includes(e)) return 'pdf';
+  if (['txt', 'md', 'markdown', 'json', 'js', 'ts', 'jsx', 'tsx', 'py', 'css', 'scss',
+    'html', 'htm', 'xml', 'log', 'csv', 'yaml', 'yml', 'sh', 'bash', 'toml', 'ini', 'conf',
+    'java', 'c', 'cpp', 'h', 'go', 'rs', 'php', 'sql', 'gitignore'].includes(e)) return 'text';
+  if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(e)) return 'office';
+  return 'other';
 }
 
-// 图片预览增强：EXIF + 缩放旋转
-async function previewImage(url, name) {
-  let controls = `
-    <div class="preview-controls">
-      <button onclick="zoomImage(0.1)">放大</button>
-      <button onclick="zoomImage(-0.1)">缩小</button>
-      <button onclick="rotateImage(90)">旋转</button>
-      <button onclick="resetImage()">重置</button>
-      <button onclick="toggleFullscreen()">全屏</button>
-      <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-      <button onclick="showQRCode('${jsEsc(url)}')">二维码</button>
-    </div>
-  `;
-  
-  let exifPanel = '';
-  if (adminState.loggedIn) {
-    try {
-      await loadLib('ExifReader', 'https://cdn.jsdelivr.net/npm/exifreader@5.0.0/dist/exif-reader.min.js');
-      const resp = await fetch(url);
-      const buffer = await resp.arrayBuffer();
-      const tags = ExifReader.read(buffer);
-      
-      const exifData = [];
-      if (tags.Make) exifData.push(`相机: ${tags.Make.description}`);
-      if (tags.Model) exifData.push(`型号: ${tags.Model.description}`);
-      if (tags.DateTime) exifData.push(`时间: ${tags.DateTime.description}`);
-      if (tags.FocalLength) exifData.push(`焦距: ${tags.FocalLength.description}`);
-      if (tags.ApertureValue) exifData.push(`光圈: ${tags.ApertureValue.description}`);
-      if (tags.ISOSpeedRatings) exifData.push(`ISO: ${tags.ISOSpeedRatings.description}`);
-      if (tags.ExposureTime) exifData.push(`快门: ${tags.ExposureTime.description}`);
-      if (tags.GPSLatitude && tags.GPSLongitude) {
-        exifData.push(`GPS: ${tags.GPSLatitude.description}, ${tags.GPSLongitude.description}`);
-      }
-      
-      if (exifData.length > 0) {
-        exifPanel = `<div class="exif-panel"><strong>EXIF 信息</strong><br>${exifData.join('<br>')}</div>`;
-      }
-    } catch (e) {
-      console.log('EXIF 读取失败:', e);
+// ---------------- API ----------------
+function pwHeader() {
+  const h = {};
+  if (state.passwords.length) h['X-Folder-Password'] = state.passwords.join(',');
+  return h;
+}
+class ApiError extends Error {
+  constructor(msg, status) { super(msg); this.status = status; }
+}
+async function handleRes(res) {
+  if (res.status === 401 || res.status === 403) {
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (data.error === 'password_required') {
+      const e = new ApiError('password_required', res.status);
+      e.lockedAt = data.lockedAt;
+      throw e;
     }
+    throw new ApiError(data.error || ('HTTP ' + res.status), res.status);
   }
-  
-  return `
-    ${controls}
-    <div class="image-container">
-      <img id="previewImg" src="${url}" style="max-width:100%;max-height:80vh;transition:transform 0.3s" />
-    </div>
-    ${exifPanel}
-  `;
-}
-
-// 图片操作函数
-let imageZoom = 1;
-let imageRotate = 0;
-
-function zoomImage(delta) {
-  imageZoom = Math.max(0.1, Math.min(5, imageZoom + delta));
-  updateImageTransform();
-}
-
-function rotateImage(deg) {
-  imageRotate = (imageRotate + deg) % 360;
-  updateImageTransform();
-}
-
-function resetImage() {
-  imageZoom = 1;
-  imageRotate = 0;
-  updateImageTransform();
-}
-
-function updateImageTransform() {
-  const img = document.getElementById('previewImg');
-  if (img) {
-    img.style.transform = `scale(${imageZoom}) rotate(${imageRotate}deg)`;
+  if (!res.ok) {
+    let data = {};
+    try { data = await res.json(); } catch {}
+    throw new ApiError(data.error || ('HTTP ' + res.status), res.status);
   }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? res.json() : res.text();
+}
+async function apiGet(url) {
+  return handleRes(await fetch(url, { headers: pwHeader() }));
+}
+async function apiSend(url, body, { admin = false } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (admin) headers['X-Admin-Password'] = state.adminPw;
+  Object.assign(headers, pwHeader());
+  return handleRes(await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }));
+}
+async function apiAuth(url, opts = {}) {
+  return handleRes(await fetch(url, opts));
 }
 
-// 全屏预览
-function toggleFullscreen() {
-  const modal = document.getElementById('modal');
-  if (!document.fullscreenElement) {
-    modal.requestFullscreen().catch(err => {
-      console.log('全屏失败:', err);
-    });
-  } else {
-    document.exitFullscreen();
-  }
-}
-
-// 复制分享链接
-async function copyShareLink(url) {
+// ---------------- 导航 ----------------
+async function browse(path, { fresh = false, search = null } = {}) {
+  state.path = path;
+  state.search = search || '';
+  state.loading = true;
+  state.error = null;
+  state.lockedAt = null;
+  render();
   try {
-    await navigator.clipboard.writeText(url);
-    alert('链接已复制');
-  } catch (e) {
-    // 降级方案
-    const input = document.createElement('input');
-    input.value = url;
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    document.body.removeChild(input);
-    alert('链接已复制');
-  }
-}
-
-// 显示二维码
-async function showQRCode(url) {
-  try {
-    await loadLib('QRCode', 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js');
-    const canvas = document.createElement('canvas');
-    await QRCode.toCanvas(canvas, url);
-    
-    const modal = document.createElement('div');
-    modal.className = 'pwmodal show';
-    modal.innerHTML = `
-      <div class="pwbox">
-        <div class="pwtitle">扫描二维码</div>
-        <div style="text-align:center"></div>
-        <div class="pwrow">
-          <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
-        </div>
-      </div>
-    `;
-    modal.querySelector('div > div').appendChild(canvas);
-    document.body.appendChild(modal);
-  } catch (e) {
-    alert('二维码生成失败: ' + e.message);
-  }
-}
-
-// 文件信息面板
-function showFileInfo(path, name, size, mime) {
-  const modal = document.createElement('div');
-  modal.className = 'pwmodal show';
-  modal.innerHTML = `
-    <div class="pwbox">
-      <div class="pwtitle">文件信息</div>
-      <div style="font-size:14px;line-height:1.8">
-        <div><strong>文件名:</strong> ${esc(name)}</div>
-        <div><strong>路径:</strong> ${esc(path)}</div>
-        <div><strong>大小:</strong> ${fmtSize(size)}</div>
-        <div><strong>类型:</strong> ${esc(mime || '未知')}</div>
-      </div>
-      <div class="pwrow">
-        <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-}
-
-async function preview(path, name, entry = null) {
-  const lower = name.toLowerCase();
-  let url;
-  try {
-    const link = await getLink(path);
-    url = link.url;
-  } catch (e) {
-    if (e && e.needPassword) {
-      const pw = await askPassword(e.lockedAt || state.path);
-      if (pw === null) return;
-      state.pwSet.add(pw);
-      return preview(path, name, entry);
-    }
-    alert('预览失败：' + (e.message || e));
-    return;
-  }
-  
-  let inner = '';
-  
-  // 图片预览（增强版）
-  if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(lower)) {
-    inner = await previewImage(url, name);
-  } 
-  // 视频预览
-  else if (/\.(mp4|webm|mov|mkv|m4v)$/.test(lower)) {
-    inner = `
-      <div class="preview-controls">
-        <button onclick="toggleFullscreen()">全屏</button>
-        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-      </div>
-      <video src="${url}" controls autoplay style="max-width:100%;max-height:80vh"></video>
-    `;
-  } 
-  // 音频预览
-  else if (/\.(mp3|wav|ogg|m4a)$/.test(lower)) {
-    inner = `
-      <div class="preview-controls">
-        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-      </div>
-      <audio src="${url}" controls autoplay style="width:100%"></audio>
-    `;
-  } 
-  // PDF 预览
-  else if (/\.pdf$/.test(lower)) {
-    inner = `
-      <div class="preview-controls">
-        <button onclick="toggleFullscreen()">全屏</button>
-        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-      </div>
-      <iframe src="${url}" style="width:100%;height:80vh;border:none"></iframe>
-    `;
-  } 
-  // Office 文件预览
-  else if (/\.(docx?|xlsx?|pptx?|doc|xls|ppt)$/.test(lower)) {
-    const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
-    inner = `<iframe src="${officeUrl}" style="width:100%;height:80vh;border:none"></iframe>`;
-  } 
-  // Markdown 预览
-  else if (/\.md$/.test(lower)) {
-    try {
-      await loadLib('marked', 'https://cdn.jsdelivr.net/npm/marked@11.1.0/marked.min.js');
-      await loadLib('DOMPurify', 'https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js');
-      
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const html = DOMPurify.sanitize(marked.parse(text));
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-          <button onclick="toggleRaw()">原始文本</button>
-        </div>
-        <div id="mdRendered" class="markdown-body">${html}</div>
-        <pre id="mdRaw" style="display:none">${esc(text)}</pre>
-      `;
-    } catch (e) {
-      alert('Markdown 渲染失败: ' + e.message);
-      return;
-    }
-  } 
-  // JSON 预览（虚拟滚动）
-  else if (/\.json$/.test(lower)) {
-    try {
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const data = JSON.parse(text);
-      const formatted = JSON.stringify(data, null, 2);
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-          <button onclick="toggleJSON()">折叠/展开</button>
-        </div>
-        <div class="json-viewer" style="max-height:70vh;overflow:auto">
-          <pre>${esc(formatted)}</pre>
-        </div>
-      `;
-    } catch (e) {
-      alert('JSON 解析失败: ' + e.message);
-      return;
-    }
-  } 
-  // CSV 预览（表格）
-  else if (/\.(csv|tsv)$/.test(lower)) {
-    try {
-      await loadLib('Papa', 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js');
-      
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const result = Papa.parse(text, { header: true, skipEmptyLines: true });
-      
-      if (result.data.length === 0) {
-        inner = '<div class="empty">空文件</div>';
-      } else {
-        const headers = result.meta.fields || [];
-        let table = '<table class="csv-table"><thead><tr>';
-        headers.forEach(h => table += `<th>${esc(h)}</th>`);
-        table += '</tr></thead><tbody>';
-        
-        // 虚拟滚动：只显示前 100 行
-        const displayRows = result.data.slice(0, 100);
-        displayRows.forEach(row => {
-          table += '<tr>';
-          headers.forEach(h => table += `<td>${esc(row[h] || '')}</td>`);
-          table += '</tr>';
-        });
-        table += '</tbody></table>';
-        
-        if (result.data.length > 100) {
-          table += `<div class="empty">显示前 100 行，共 ${result.data.length} 行</div>`;
-        }
-        
-        inner = `
-          <div class="preview-controls">
-            <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-          </div>
-          <div style="max-height:70vh;overflow:auto">${table}</div>
-        `;
-      }
-    } catch (e) {
-      alert('CSV 解析失败: ' + e.message);
-      return;
-    }
-  } 
-  // YAML 预览
-  else if (/\.(yaml|yml)$/.test(lower)) {
-    try {
-      await loadLib('jsyaml', 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js');
-      
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const data = jsyaml.load(text);
-      const formatted = JSON.stringify(data, null, 2);
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-        </div>
-        <div style="max-height:70vh;overflow:auto">
-          <pre>${esc(formatted)}</pre>
-        </div>
-      `;
-    } catch (e) {
-      alert('YAML 解析失败: ' + e.message);
-      return;
-    }
-  } 
-  // XML 预览
-  else if (/\.xml$/.test(lower)) {
-    try {
-      const resp = await fetch(url);
-      const text = await resp.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(text, 'text/xml');
-      const formatted = new XMLSerializer().serializeToString(doc);
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-        </div>
-        <div style="max-height:70vh;overflow:auto">
-          <pre>${esc(formatted)}</pre>
-        </div>
-      `;
-    } catch (e) {
-      alert('XML 解析失败: ' + e.message);
-      return;
-    }
-  } 
-  // 代码文件预览（语法高亮 - Prism.js）
-  else if (/\.(txt|js|ts|py|java|c|cpp|h|hpp|css|html|ini|cfg|sh|bash|zsh|sql|go|rs|rb|php|pl|swift|kt|scala|r|lua|vim|dockerfile|makefile)$/.test(lower)) {
-    try {
-      // 加载 Prism 核心（如果未加载）
-      if (!window.Prism) {
-        await loadLib('Prism', 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js');
-        // 加载主题 CSS
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css';
-        document.head.appendChild(link);
-      }
-      
-      const resp = await fetch(url);
-      const text = await resp.text();
-      
-      // 根据扩展名选择语言
-      const langMap = {
-        'js': 'javascript', 'ts': 'typescript', 'py': 'python',
-        'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
-        'css': 'css', 'html': 'markup', 'xml': 'markup',
-        'ini': 'ini', 'cfg': 'ini', 'sh': 'bash', 'bash': 'bash',
-        'zsh': 'bash', 'sql': 'sql', 'go': 'go', 'rs': 'rust',
-        'rb': 'ruby', 'php': 'php', 'pl': 'perl', 'swift': 'swift',
-        'kt': 'kotlin', 'scala': 'scala', 'r': 'r', 'lua': 'lua',
-        'vim': 'vim', 'dockerfile': 'docker', 'makefile': 'makefile'
-      };
-      
-      const ext = lower.split('.').pop();
-      const lang = langMap[ext] || 'plaintext';
-      
-      // 按需加载语言组件
-      if (lang !== 'plaintext' && !Prism.languages[lang]) {
-        await loadLib(`prism-${lang}`, `https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-${lang}.min.js`);
-      }
-      
-      let highlighted;
-      try {
-        if (lang === 'plaintext' || !Prism.languages[lang]) {
-          highlighted = esc(text);
-        } else {
-          highlighted = Prism.highlight(text, Prism.languages[lang], lang);
-        }
-      } catch (e) {
-        highlighted = esc(text);
-      }
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-        </div>
-        <pre style="max-height:70vh;overflow:auto"><code class="language-${lang}">${highlighted}</code></pre>
-      `;
-    } catch (e) {
-      // 降级：无高亮
-      const resp = await fetch(url);
-      const text = await resp.text();
-      inner = `<pre style="max-height:70vh;overflow:auto">${esc(text)}</pre>`;
-    }
-  } 
-  // ZIP 压缩包预览
-  else if (/\.zip$/.test(lower)) {
-    try {
-      await loadLib('fflate', 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
-      
-      const resp = await fetch(url);
-      const buffer = await resp.arrayBuffer();
-      const zip = fflate.unzipSync(new Uint8Array(buffer));
-      
-      let fileList = '<div class="zip-file-list"><strong>压缩包内容:</strong><ul>';
-      for (const [path, data] of Object.entries(zip)) {
-        const size = data.length;
-        fileList += `<li>
-          <span>${esc(path)}</span>
-          <span style="color:var(--muted);font-size:12px">${fmtSize(size)}</span>
-          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="extractZipFile('${jsEsc(path)}', '${jsEsc(url)}')">预览</button>
-          <button class="btn" style="padding:2px 8px;font-size:12px" onclick="downloadZipFile('${jsEsc(path)}', '${jsEsc(url)}')">下载</button>
-        </li>`;
-      }
-      fileList += '</ul></div>';
-      
-      inner = `
-        <div class="preview-controls">
-          <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-        </div>
-        ${fileList}
-      `;
-    } catch (e) {
-      alert('ZIP 解析失败: ' + e.message);
-      return;
-    }
-  } 
-  // 字体文件预览
-  else if (/\.(ttf|otf|woff|woff2)$/.test(lower)) {
-    inner = `
-      <div class="preview-controls">
-        <button onclick="copyShareLink('${jsEsc(url)}')">复制链接</button>
-      </div>
-      <div style="text-align:center;padding:40px">
-        <div style="font-size:48px;font-family:CustomFont">AaBbCcDdEeFfGg</div>
-        <style>@font-face { font-family: 'CustomFont'; src: url('${url}'); }</style>
-        <div style="margin-top:20px;color:var(--muted)">字体预览</div>
-      </div>
-    `;
-  } 
-  // 其他类型：下载
-  else {
-    window.location.href = url;
-    return;
-  }
-  
-  // 添加文件信息按钮
-  if (entry) {
-    inner = `
-      <div class="preview-controls" style="border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px">
-        <button onclick="showFileInfo('${jsEsc(path)}', '${jsEsc(name)}', ${entry.size || 0}, '${jsEsc(entry.mime || '')}')">文件信息</button>
-      </div>
-      ${inner}
-    `;
-  }
-  
-  document.getElementById('modalBody').innerHTML = inner;
-  document.getElementById('modal').classList.add('show');
-}
-
-// ZIP 文件预览
-async function extractZipFile(filePath, zipUrl) {
-  try {
-    const resp = await fetch(zipUrl);
-    const buffer = await resp.arrayBuffer();
-    const zip = fflate.unzipSync(new Uint8Array(buffer));
-    const data = zip[filePath];
-    
-    if (!data) {
-      alert('文件不存在');
-      return;
-    }
-    
-    // 根据文件类型预览
-    const ext = filePath.split('.').pop().toLowerCase();
-    const blob = new Blob([data]);
-    const url = URL.createObjectURL(blob);
-    
-    if (/\.(txt|md|json|js|ts|py|java|c|cpp|h|css|html|xml|yaml|yml|ini|cfg|sh|sql|go|rs|rb|php)$/.test(ext)) {
-      const text = new TextDecoder().decode(data);
-      const modal = document.createElement('div');
-      modal.className = 'pwmodal show';
-      modal.innerHTML = `
-        <div class="pwbox" style="width:90vw;max-width:800px">
-          <div class="pwtitle">${esc(filePath)}</div>
-          <pre style="max-height:70vh;overflow:auto">${esc(text)}</pre>
-          <div class="pwrow">
-            <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-    } else if (/\.(png|jpe?g|gif|webp|bmp|svg)$/.test(ext)) {
-      const modal = document.createElement('div');
-      modal.className = 'pwmodal show';
-      modal.innerHTML = `
-        <div class="pwbox">
-          <div class="pwtitle">${esc(filePath)}</div>
-          <img src="${url}" style="max-width:100%;max-height:70vh" />
-          <div class="pwrow">
-            <button class="btn" onclick="this.closest('.pwmodal').remove()">关闭</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
+    let data;
+    if (state.search) {
+      data = await apiGet(`/api/search?q=${enc(state.search)}&path=${enc(path)}`);
     } else {
-      // 其他类型：下载
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filePath.split('/').pop();
-      a.click();
-      URL.revokeObjectURL(url);
+      data = await apiGet(`/api/list?path=${enc(path)}&sort=${state.sort}${fresh ? '&fresh=1' : ''}`);
     }
+    state.entries = Array.isArray(data) ? data : [];
   } catch (e) {
-    alert('解压失败: ' + e.message);
-  }
-}
-
-// ZIP 文件下载
-async function downloadZipFile(filePath, zipUrl) {
-  try {
-    const resp = await fetch(zipUrl);
-    const buffer = await resp.arrayBuffer();
-    const zip = fflate.unzipSync(new Uint8Array(buffer));
-    const data = zip[filePath];
-    
-    if (!data) {
-      alert('文件不存在');
-      return;
+    if (e.message === 'password_required') {
+      state.lockedAt = e.lockedAt;
+      const pw = await promptPassword(e.lockedAt);
+      if (pw) { state.passwords.push(pw); return browse(path, { fresh: true, search }); }
+      state.error = '需要密码才能访问该目录';
+    } else {
+      state.error = e.message || '加载失败';
     }
-    
-    const blob = new Blob([data]);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filePath.split('/').pop();
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    alert('下载失败: ' + e.message);
+  } finally {
+    state.loading = false;
+    render();
   }
 }
 
-// Markdown 原始文本切换
-function toggleRaw() {
-  const rendered = document.getElementById('mdRendered');
-  const raw = document.getElementById('mdRaw');
-  if (rendered && raw) {
-    const isHidden = rendered.style.display === 'none';
-    rendered.style.display = isHidden ? '' : 'none';
-    raw.style.display = isHidden ? 'none' : '';
-  }
+function applySort(key) {
+  const [k, d] = state.sort.split('_');
+  const desc = (k === key) ? d !== 'desc' : false;
+  state.sort = `${key}_${desc ? 'desc' : 'asc'}`;
+  localStorage.setItem('elist.sort', state.sort);
+  browse(state.path, { fresh: true });
 }
 
-// JSON 折叠切换
-function toggleJSON() {
-  const pre = document.querySelector('.json-viewer pre');
-  if (pre) {
-    const text = pre.textContent;
-    try {
-      const data = JSON.parse(text);
-      if (pre.dataset.collapsed === 'true') {
-        pre.textContent = JSON.stringify(data, null, 2);
-        pre.dataset.collapsed = 'false';
-      } else {
-        pre.textContent = JSON.stringify(data);
-        pre.dataset.collapsed = 'true';
-      }
-    } catch (e) {}
-  }
-}
-
-function closeModal() {
-  document.getElementById('modal').classList.remove('show');
-  document.getElementById('modalBody').innerHTML = '';
+// ---------------- 渲染 ----------------
+function render() {
+  const adminLabel = state.admin ? '管理员 ●' : '管理员';
+  app.innerHTML = `
+    <div class="toolbar">
+      <div class="brand">${esc(state.title)}<span class="dot">.</span></div>
+      <div class="breadcrumb" id="crumbs"></div>
+      <div class="search"><input id="search" placeholder="搜索当前目录…" value="${esc(state.search)}"/></div>
+      <div class="seg" id="viewseg">
+        <button data-view="list" class="${state.view === 'list' ? 'active' : ''}">列表</button>
+        <button data-view="grid" class="${state.view === 'grid' ? 'active' : ''}">网格</button>
+      </div>
+      <select class="input" id="sortsel">
+        <option value="name_asc"${state.sort === 'name_asc' ? ' selected' : ''}>名称 ↑</option>
+        <option value="name_desc"${state.sort === 'name_desc' ? ' selected' : ''}>名称 ↓</option>
+        <option value="time_desc"${state.sort === 'time_desc' ? ' selected' : ''}>时间 ↓</option>
+        <option value="time_asc"${state.sort === 'time_asc' ? ' selected' : ''}>时间 ↑</option>
+        <option value="size_desc"${state.sort === 'size_desc' ? ' selected' : ''}>大小 ↓</option>
+        <option value="size_asc"${state.sort === 'size_asc' ? ' selected' : ''}>大小 ↑</option>
+      </select>
+      <button class="btn" id="refresh" title="刷新">刷新</button>
+      <button class="btn icon" id="theme" title="切换主题">◐</button>
+      <button class="btn primary" id="admin">${adminLabel}</button>
+    </div>
+    <div class="content" id="content"></div>
+  `;
+  renderCrumbs();
+  renderContent();
+  bindToolbar();
 }
 
 function renderCrumbs() {
+  const box = document.getElementById('crumbs');
   const parts = state.path.split('/').filter(Boolean);
+  const crumbs = [{ name: '根', path: '/' }];
   let acc = '';
-  const segs = ['<span onclick="openPath(\'/\')">根</span>'];
-  for (const p of parts) {
-    acc += '/' + p;
-    const pp = acc;
-    segs.push(`<span onclick="openPath('${jsEsc(pp)}')">${esc(p)}</span>`);
-  }
-  document.getElementById('crumbs').innerHTML = segs.join(' / ');
+  for (const p of parts) { acc += '/' + p; crumbs.push({ name: p, path: acc }); }
+  box.innerHTML = crumbs.map((c, i) => {
+    const cur = i === crumbs.length - 1;
+    const sep = i > 0 ? '<span class="crumb-sep">/</span>' : '';
+    return `${sep}<button class="crumb${cur ? ' current' : ''}" data-path="${esc(c.path)}">${esc(c.name)}</button>`;
+  }).join('');
+  box.querySelectorAll('.crumb').forEach((b) => {
+    b.onclick = () => browse(b.dataset.path);
+  });
 }
 
-// 左侧导航树（支持展开/折叠子目录）
-const treeCache = new Map(); // 缓存已加载的目录内容
+function renderContent() {
+  const c = document.getElementById('content');
+  if (state.loading) { c.innerHTML = `<div class="state-msg">加载中…</div>`; return; }
+  if (state.error) { c.innerHTML = `<div class="state-msg"><div class="err">${esc(state.error)}</div></div>`; return; }
+  if (!state.entries.length) {
+    c.innerHTML = `<div class="state-msg">${state.search ? '无匹配结果' : '空目录'}</div>`;
+    return;
+  }
+  c.innerHTML = state.view === 'list' ? renderList() : renderGrid();
+  bindItems(c);
+}
 
-async function renderTree() {
-  const treeEl = document.getElementById('tree');
-  if (!treeEl) return;
-  
-  // 构建路径层级
-  const parts = state.path.split('/').filter(Boolean);
-  let html = '';
-  let acc = '';
-  
-  // 根目录
-  html += `<div class="tree-item${parts.length === 0 ? ' active' : ''}" onclick="openPath('/')">📦 根</div>`;
-  
-  // 逐层展开
-  for (let i = 0; i < parts.length; i++) {
-    const parentPath = acc || '/';
-    acc += '/' + parts[i];
-    const isActive = i === parts.length - 1;
-    
-    // 获取子目录列表
-    let children = treeCache.get(parentPath);
-    if (!children) {
+function itemActionsHtml(entry) {
+  if (!state.admin) return '';
+  return `<div class="fab-acts">
+    <button class="btn sm" data-act="rename" data-path="${esc(entry.path)}">改名</button>
+    <button class="btn sm" data-act="move" data-path="${esc(entry.path)}">移动</button>
+    <button class="btn sm danger" data-act="delete" data-path="${esc(entry.path)}">删除</button>
+  </div>`;
+}
+
+function renderList() {
+  const rows = state.entries.map((e) => {
+    const icon = e.isDir ? ICON.dir : ICON.file;
+    return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      <td class="name"><span class="label">${icon}<span>${esc(e.name)}</span></span></td>
+      <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
+      <td class="mod">${esc(fmtDate(e.modified))}</td>
+      <td class="acts">${itemActionsHtml(e)}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="list">
+    <thead><tr>
+      <th data-sort="name">名称</th><th data-sort="size">大小</th>
+      <th data-sort="time">修改时间</th><th></th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderGrid() {
+  const cards = state.entries.map((e) => {
+    const icon = e.isDir ? ICON.dir : ICON.file;
+    return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      <div class="thumb">${icon}</div>
+      <div class="name">${esc(e.name)}</div>
+      <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
+      <div class="acts">${itemActionsHtml(e)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="grid">${cards}</div>`;
+}
+
+function bindItems(c) {
+  c.querySelectorAll('.row, .card').forEach((el) => {
+    el.onclick = (ev) => {
+      if (ev.target.closest('[data-act]')) return;
+      const entry = state.entries.find((x) => x.path === el.dataset.path);
+      if (!entry) return;
+      if (entry.isDir) browse(entry.path);
+      else openPreview(entry);
+    };
+  });
+  c.querySelectorAll('[data-act]').forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      const path = btn.dataset.path;
+      const entry = state.entries.find((x) => x.path === path);
+      const act = btn.dataset.act;
+      if (act === 'rename') doRename(entry);
+      else if (act === 'move') doMove(entry);
+      else if (act === 'delete') doDelete(entry);
+    };
+  });
+}
+
+function bindToolbar() {
+  document.getElementById('viewseg').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => { state.view = b.dataset.view; localStorage.setItem('elist.view', state.view); render(); };
+  });
+  const sortsel = document.getElementById('sortsel');
+  sortsel.onchange = () => { state.sort = sortsel.value; localStorage.setItem('elist.sort', state.sort); browse(state.path, { fresh: true }); };
+  document.getElementById('refresh').onclick = () => browse(state.path, { fresh: true });
+  document.getElementById('theme').onclick = toggleTheme;
+  document.getElementById('admin').onclick = () => state.admin ? adminMenu() : login();
+
+  const search = document.getElementById('search');
+  let t;
+  search.oninput = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const q = search.value.trim();
+      if (q) browse(state.path, { search: q });
+      else browse(state.path);
+    }, 300);
+  };
+
+  document.querySelectorAll('th[data-sort]').forEach((th) => {
+    th.onclick = () => applySort(th.dataset.sort);
+  });
+}
+
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('elist.theme', next);
+}
+
+// ---------------- 模态框 ----------------
+function openModal(node) {
+  const bd = document.createElement('div');
+  bd.className = 'modal-backdrop';
+  bd.appendChild(node);
+  modalRoot.appendChild(bd);
+  bd.addEventListener('click', (e) => { if (e.target === bd) closeModal(bd); });
+  return bd;
+}
+function closeModal(bd) { bd.remove(); }
+function escClose(e) { if (e.key === 'Escape') { const b = modalRoot.lastElementChild; if (b) b.remove(); } }
+document.addEventListener('keydown', escClose);
+
+function promptText({ title, label, value = '', placeholder = '', type = 'text' }) {
+  return new Promise((resolve) => {
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<h3>${esc(title)}</h3>
+      <div class="field"><label>${esc(label)}</label>
+      <input class="input" id="v" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"/></div>
+      <div class="row-actions">
+        <button class="btn ghost" id="cancel">取消</button>
+        <button class="btn primary" id="ok">确定</button>
+      </div>`;
+    const bd = openModal(m);
+    const input = m.querySelector('#v');
+    input.focus(); input.select();
+    const done = (v) => { closeModal(bd); resolve(v); };
+    m.querySelector('#ok').onclick = () => done(input.value);
+    m.querySelector('#cancel').onclick = () => done(null);
+    input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value); };
+  });
+}
+
+function promptPassword(lockedAt) {
+  return promptText({
+    title: '需要密码',
+    label: `该目录受密码保护${lockedAt ? '：' + lockedAt : ''}`,
+    type: 'password',
+    placeholder: '目录密码',
+  });
+}
+
+function alertModal(title, msg, kind = '') {
+  return new Promise((resolve) => {
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = `<h3>${esc(title)}</h3>
+      <div class="notice ${kind}">${esc(msg)}</div>
+      <div class="row-actions"><button class="btn primary" id="ok">知道了</button></div>`;
+    const bd = openModal(m);
+    m.querySelector('#ok').onclick = () => { closeModal(bd); resolve(); };
+  });
+}
+
+// ---------------- 管理员 ----------------
+async function login() {
+  const pw = await promptText({ title: '管理员登录', label: '管理员密码', type: 'password' });
+  if (pw === null) return;
+  try {
+    const data = await apiSend('/api/admin/login', { password: pw });
+    if (data.success) {
+      state.adminPw = pw; state.admin = true;
+      sessionStorage.setItem('elist.adminPw', pw);
+      render();
+    }
+  } catch (e) {
+    if (e.message === '密码未设置') {
+      alertModal('密码未设置',
+        '管理员密码（admin_password）当前为空。请先在存储根目录的 .elist.xlsx 配置表 config 工作表中，将 admin_password 设为非空值并保存，再登录。',
+        'warn');
+    } else if (e.message === '密码错误') {
+      alertModal('登录失败', '密码错误，请重试。', 'danger');
+    } else {
+      alertModal('登录失败', e.message, 'danger');
+    }
+  }
+}
+
+function adminMenu() {
+  const m = document.createElement('div');
+  m.className = 'modal';
+  m.innerHTML = `<h3>管理员</h3>
+    <div class="field"><div class="notice">已登录。可管理当前目录密码、新建文件夹、对文件重命名/移动/删除。</div></div>
+    <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
+      <button class="btn" id="setpw">设置当前目录密码</button>
+      <button class="btn" id="newfolder">新建文件夹</button>
+      <button class="btn" id="savecfg">保存配置</button>
+      <button class="btn danger" id="logout">登出</button>
+    </div>`;
+  const bd = openModal(m);
+  m.querySelector('#setpw').onclick = () => { closeModal(bd); setFolderPassword(); };
+  m.querySelector('#newfolder').onclick = () => { closeModal(bd); doMkdir(); };
+  m.querySelector('#savecfg').onclick = async () => {
+    closeModal(bd);
+    try { await apiAuth('/api/admin/save', { method: 'POST' }); alertModal('已保存', '配置已写回 .elist.xlsx。', 'ok'); }
+    catch (e) { alertModal('保存失败', e.message, 'danger'); }
+  };
+  m.querySelector('#logout').onclick = () => {
+    closeModal(bd);
+    state.admin = false; state.adminPw = '';
+    sessionStorage.removeItem('elist.adminPw');
+    render();
+  };
+}
+
+async function setFolderPassword() {
+  const path = state.path;
+  let cur = { password: '', hint: '', hidden: false };
+  try { cur = await apiAuth(`/api/admin/config?path=${enc(path)}`); } catch (e) {}
+  const m = document.createElement('div');
+  m.className = 'modal';
+  m.innerHTML = `<h3>目录密码设置</h3>
+    <div class="field"><label>路径</label><input class="input" value="${esc(path)}" disabled/></div>
+    <div class="field"><label>访问密码（留空=取消密码）</label><input class="input" id="pw" type="text" value="${esc(cur.password || '')}"/></div>
+    <div class="field"><label>提示（可选）</label><input class="input" id="hint" value="${esc(cur.hint || '')}"/></div>
+    <div class="field"><label><input type="checkbox" id="hidden" ${cur.hidden ? 'checked' : ''}/> 隐藏此目录</label></div>
+    <div class="row-actions">
+      <button class="btn ghost" id="cancel">取消</button>
+      <button class="btn primary" id="ok">保存</button>
+    </div>`;
+  const bd = openModal(m);
+  m.querySelector('#ok').onclick = async () => {
+    const pw = m.querySelector('#pw').value;
+    const hint = m.querySelector('#hint').value;
+    const hidden = m.querySelector('#hidden').checked;
+    try {
+      await apiAuth('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, password: pw, hint, hidden }),
+      });
+      await apiAuth('/api/admin/save', { method: 'POST' });
+      closeModal(bd);
+      alertModal('已保存', '目录密码配置已更新。', 'ok');
+      browse(state.path, { fresh: true });
+    } catch (e) { alertModal('保存失败', e.message, 'danger'); }
+  };
+  m.querySelector('#cancel').onclick = () => closeModal(bd);
+}
+
+// ---------------- 文件操作 ----------------
+async function doMkdir() {
+  const name = await promptText({ title: '新建文件夹', label: '文件夹名称', placeholder: '新文件夹' });
+  if (!name) return;
+  const target = joinPath(state.path, name);
+  try {
+    await apiSend('/api/file/mkdir', { path: target }, { admin: true });
+    browse(state.path, { fresh: true });
+  } catch (e) { alertModal('创建失败', e.message, 'danger'); }
+}
+async function doRename(entry) {
+  const name = await promptText({ title: '重命名', label: '新名称', value: basename(entry.path) });
+  if (!name || name === basename(entry.path)) return;
+  const target = joinPath(parentDir(entry.path), name);
+  try {
+    await apiSend('/api/file/move', { sourcePath: entry.path, targetPath: target }, { admin: true });
+    browse(state.path, { fresh: true });
+  } catch (e) { alertModal('重命名失败', e.message, 'danger'); }
+}
+async function doMove(entry) {
+  const target = await promptText({ title: '移动', label: '目标完整路径', value: entry.path });
+  if (!target || target === entry.path) return;
+  try {
+    await apiSend('/api/file/move', { sourcePath: entry.path, targetPath: target }, { admin: true });
+    browse(state.path, { fresh: true });
+  } catch (e) { alertModal('移动失败', e.message, 'danger'); }
+}
+async function doDelete(entry) {
+  const ok = await promptText({ title: '删除确认', label: `确定删除「${entry.name}」？输入 YES 确认`, placeholder: 'YES' });
+  if (ok !== 'YES') return;
+  try {
+    await apiSend('/api/file/delete', { path: entry.path }, { admin: true });
+    browse(state.path, { fresh: true });
+  } catch (e) { alertModal('删除失败', e.message, 'danger'); }
+}
+
+// ---------------- 预览 ----------------
+let plyrPromise = null;
+function loadPlyr() {
+  if (window.Plyr) return Promise.resolve(window.Plyr);
+  if (plyrPromise) return plyrPromise;
+  plyrPromise = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = '/vendor/plyr.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = '/vendor/plyr.polyfilled.min.js';
+    s.onload = () => resolve(window.Plyr);
+    s.onerror = () => reject(new Error('plyr load failed'));
+    document.head.appendChild(s);
+  });
+  return plyrPromise;
+}
+
+async function openPreview(entry) {
+  const type = mediaType(entry.name);
+  const m = document.createElement('div');
+  m.className = 'modal preview-modal';
+  m.innerHTML = `<h3 style="display:flex;justify-content:space-between;align-items:center">
+      <span>${esc(entry.name)}</span>
+      <button class="btn ghost sm" id="x">✕</button></h3>
+    <div class="preview-body" id="pb"><div class="state-msg">加载中…</div></div>`;
+  const bd = openModal(m);
+  m.querySelector('#x').onclick = () => closeModal(bd);
+
+  const pb = m.querySelector('#pb');
+  const metaBar = `<div class="preview-meta"><span>${type === 'other' ? '文件' : type}</span>${entry.size != null ? `<span>${esc(fmtSize(entry.size))}</span>` : ''}</div>`;
+
+  try {
+    if (type === 'video' || type === 'audio' || type === 'image' || type === 'pdf') {
+      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
+      if (type === 'image') {
+        pb.innerHTML = metaBar + `<img src="${esc(url)}" alt="${esc(entry.name)}"/>`;
+      } else if (type === 'pdf') {
+        pb.innerHTML = metaBar + `<iframe src="${esc(url)}"></iframe>`;
+      } else if (type === 'video' || type === 'audio') {
+        pb.innerHTML = metaBar + `<div id="media"></div><div class="preview-bar">
+          <button class="btn" id="opennew">新窗口打开</button>
+          <button class="btn primary" id="dl">下载</button></div>`;
+        const media = m.querySelector('#media');
+        const el = document.createElement(type);
+        el.controls = true;
+        const src = document.createElement('source');
+        src.src = url;
+        el.appendChild(src);
+        media.appendChild(el);
+        try {
+          const Plyr = await loadPlyr();
+          new Plyr(el, {
+            controls: type === 'video'
+              ? ['play-large', 'play', 'progress', 'current-time', 'duration', 'mute', 'volume', 'fullscreen']
+              : ['play', 'progress', 'current-time', 'duration', 'mute', 'volume'],
+          });
+        } catch (_) { /* 原生 controls 已兜底，自带进度条 */ }
+        m.querySelector('#opennew').onclick = () => window.open(url, '_blank');
+        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
+      }
+    } else if (type === 'text') {
+      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
       try {
-        const res = await apiList(parentPath);
-        if (res.entries) {
-          children = res.entries.filter(e => e.isDir);
-          treeCache.set(parentPath, children);
-        }
-      } catch (e) {
-        children = [];
+        const txt = await (await fetch(url)).text();
+        pb.innerHTML = metaBar + `<pre>${esc(txt)}</pre><div class="preview-bar">
+          <button class="btn primary" id="dl">下载</button></div>`;
+        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
+      } catch (_) {
+        pb.innerHTML = metaBar + `<div class="notice">无法内联读取（可能跨域），可下载查看。</div>
+          <div class="preview-bar"><button class="btn primary" id="dl">下载</button></div>`;
+        m.querySelector('#dl').onclick = () => window.open(url, '_blank');
       }
-    }
-    
-    // 渲染当前层级的子目录
-    if (children && children.length > 0) {
-      for (const child of children) {
-        const isCurrentPath = child.path === acc;
-        html += `<div class="tree-item${isCurrentPath ? ' active' : ''}" style="margin-left:${(i + 1) * 16}px" onclick="openPath('${jsEsc(child.path)}')">📁 ${esc(child.name)}</div>`;
-      }
-    }
-  }
-  
-  treeEl.innerHTML = html;
-}
-
-// 侧边栏切换
-document.getElementById('sidebar-toggle').addEventListener('click', () => {
-  state.sidebarOpen = !state.sidebarOpen;
-  document.getElementById('sidebar').classList.toggle('open', state.sidebarOpen);
-  document.body.classList.toggle('sidebar-open', state.sidebarOpen);
-});
-
-// 视图切换
-document.querySelectorAll('.view-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    state.view = btn.dataset.view;
-    localStorage.setItem('view', state.view);
-    document.querySelectorAll('.view-btn').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    // 重新渲染当前目录
-    openPath(state.path, false, false);
-  });
-});
-
-// 初始化视图按钮状态
-document.querySelectorAll('.view-btn').forEach((btn) => {
-  btn.classList.toggle('active', btn.dataset.view === state.view);
-});
-
-// 排序切换
-document.getElementById('sort').addEventListener('change', (e) => {
-  state.sort = e.target.value;
-  openPath(state.path, false, false);
-});
-
-// 刷新按钮：强制回源当前目录（绕过缓存，立即反映配置 / 文件的改动）
-document.getElementById('refresh').addEventListener('click', () => openPath(state.path, true, false));
-
-// 浏览器前进/后退支持
-window.addEventListener('popstate', (e) => {
-  const path = e.state?.path || location.pathname || '/';
-  openPath(path, false, false);
-});
-
-// 搜索（现搜 + 后端内存索引）；密码走头
-document.getElementById('search').addEventListener('input', async (e) => {
-  const q = e.target.value.trim();
-  const listEl = document.getElementById('list');
-  if (!q) return openPath(state.path);
-  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(state.path)}`, {
-    headers: pwHeaders(),
-  });
-  if (r.status === 403) {
-    const body = await r.json().catch(() => ({}));
-    const pw = await askPassword(body.lockedAt || state.path);
-    if (pw === null) return;
-    state.pwSet.add(pw);
-    return document.getElementById('search').dispatchEvent(new Event('input'));
-  }
-  const entries = await r.json();
-  listEl.innerHTML = entries.length
-    ? entries
-        .map(
-          (e) => `<div class="row" data-path="${esc(e.path)}">
-            <div class="ico">${e.isDir ? '📁' : '📄'}</div>
-            <div class="name">${esc(e.name)}</div>
-            <div class="size">${e.isDir ? '' : fmtSize(e.size)}</div>
-          </div>`
-        )
-        .join('')
-    : '<div class="empty">无匹配</div>';
-  listEl.querySelectorAll('.row').forEach((row) => {
-    row.onclick = () => preview(row.dataset.path, row.querySelector('.name').textContent);
-  });
-});
-
-// 拉取公用配置（站点标题、默认排序）
-fetch('/api/config')
-  .then((r) => r.json())
-  .then((d) => {
-    if (d && d.title) document.title = d.title;
-    if (d && d.sort) {
-      state.sort = d.sort;
-      const sel = document.getElementById('sort');
-      if (sel) sel.value = d.sort;
-    }
-  })
-  .catch(() => {});
-
-// 登录功能
-const adminState = { loggedIn: false };
-
-function updateLoginUI() {
-  const loginBtn = document.getElementById('loginBtn');
-  const logoutBtn = document.getElementById('logoutBtn');
-  const saveConfigBtn = document.getElementById('saveConfigBtn');
-  
-  if (adminState.loggedIn) {
-    loginBtn.style.display = 'none';
-    logoutBtn.style.display = '';
-    saveConfigBtn.style.display = '';
-  } else {
-    loginBtn.style.display = '';
-    logoutBtn.style.display = 'none';
-    saveConfigBtn.style.display = 'none';
-  }
-}
-
-function askLogin() {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('loginModal');
-    const input = document.getElementById('loginPassword');
-    const ok = document.getElementById('loginOk');
-    const cancel = document.getElementById('loginCancel');
-    input.value = '';
-    modal.classList.add('show');
-    input.focus();
-    const done = (val) => {
-      modal.classList.remove('show');
-      ok.onclick = null;
-      cancel.onclick = null;
-      input.onkeydown = null;
-      resolve(val);
-    };
-    ok.onclick = () => done(input.value);
-    cancel.onclick = () => done(null);
-    input.onkeydown = (e) => {
-      if (e.key === 'Enter') done(input.value);
-      else if (e.key === 'Escape') done(null);
-    };
-  });
-}
-
-document.getElementById('loginBtn').addEventListener('click', async () => {
-  const password = await askLogin();
-  if (password === null) return;
-  
-  try {
-    const r = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
-    });
-    if (r.ok) {
-      adminState.loggedIn = true;
-      updateLoginUI();
-      openPath(state.path, true, false); // 刷新列表显示操作按钮
     } else {
-      alert('登录失败：密码错误');
+      const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
+      pb.innerHTML = metaBar + `<div class="notice">该类型暂不支持内联预览，请下载查看。</div>
+        <div class="preview-bar"><button class="btn primary" id="dl">下载</button></div>`;
+      m.querySelector('#dl').onclick = () => window.open(url, '_blank');
     }
   } catch (e) {
-    alert('登录失败：' + e.message);
-  }
-});
-
-document.getElementById('logoutBtn').addEventListener('click', async () => {
-  try {
-    await fetch('/api/admin/logout', { method: 'POST' });
-  } catch (e) {}
-  adminState.loggedIn = false;
-  updateLoginUI();
-  openPath(state.path, false, false);
-});
-
-// 编辑配置功能
-let editingPath = '';
-
-function askEdit(path, currentPassword = '', currentHint = '', currentHidden = false) {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('editModal');
-    const pathInput = document.getElementById('editPath');
-    const pwInput = document.getElementById('editPassword');
-    const hintInput = document.getElementById('editHint');
-    const hiddenInput = document.getElementById('editHidden');
-    const ok = document.getElementById('editOk');
-    const cancel = document.getElementById('editCancel');
-    
-    pathInput.value = path;
-    pwInput.value = currentPassword;
-    hintInput.value = currentHint;
-    hiddenInput.checked = currentHidden;
-    editingPath = path;
-    
-    modal.classList.add('show');
-    pwInput.focus();
-    
-    const done = (val) => {
-      modal.classList.remove('show');
-      ok.onclick = null;
-      cancel.onclick = null;
-      resolve(val);
-    };
-    
-    ok.onclick = () => done({
-      path: pathInput.value,
-      password: pwInput.value,
-      hint: hintInput.value,
-      hidden: hiddenInput.checked
-    });
-    cancel.onclick = () => done(null);
-  });
-}
-
-async function editEntry(path) {
-  if (!adminState.loggedIn) return;
-  
-  // 获取当前配置
-  try {
-    const r = await fetch('/api/admin/config?path=' + encodeURIComponent(path));
-    const config = await r.json();
-    
-    const result = await askEdit(
-      path,
-      config.password || '',
-      config.hint || '',
-      config.hidden || false
-    );
-    
-    if (result === null) return;
-    
-    // 保存配置
-    const saveR = await fetch('/api/admin/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(result)
-    });
-    
-    if (saveR.ok) {
-      openPath(state.path, true, false); // 刷新列表
+    if (e.message === 'password_required') {
+      const pw = await promptPassword(e.lockedAt);
+      if (pw) { state.passwords.push(pw); return openPreview(entry); }
+      pb.innerHTML = `<div class="notice danger">需要密码</div>`;
     } else {
-      alert('保存失败');
+      pb.innerHTML = `<div class="notice danger">预览失败：${esc(e.message)}</div>`;
     }
-  } catch (e) {
-    alert('编辑失败：' + e.message);
   }
 }
 
-// 保存配置到 xlsx
-document.getElementById('saveConfigBtn').addEventListener('click', async () => {
-  if (!confirm('确定要保存所有配置到 .elist.xlsx 吗？')) return;
-  
+// ---------------- 启动 ----------------
+async function init() {
+  const t = localStorage.getItem('elist.theme');
+  if (t) document.documentElement.setAttribute('data-theme', t);
   try {
-    const r = await fetch('/api/admin/save', { method: 'POST' });
-    if (r.ok) {
-      alert('配置已保存');
-    } else {
-      alert('保存失败');
-    }
-  } catch (e) {
-    alert('保存失败：' + e.message);
-  }
-});
-
-// 页面离开时自动保存配置
-window.addEventListener('beforeunload', (e) => {
-  if (adminState.loggedIn) {
-    // 发送同步请求保存配置
-    navigator.sendBeacon('/api/admin/save');
-  }
-});
-
-// 修改列表渲染，添加操作按钮
-const originalRenderListView = renderListView;
-renderListView = function(entries, listEl) {
-  listEl.className = 'list-view';
-  listEl.innerHTML = entries
-    .map(
-      (e) => `<div class="row" data-path="${esc(e.path)}" data-dir="${e.isDir}">
-        <div class="ico">${e.isDir ? '📁' : '📄'}</div>
-        <div class="name">${esc(e.name)}</div>
-        <div class="size">${e.isDir ? '' : fmtSize(e.size)}</div>
-        ${adminState.loggedIn && e.isDir ? `<button class="btn" style="padding:2px 8px;font-size:12px" onclick="event.stopPropagation();editEntry('${esc(e.path)}')">⚙️</button>` : ''}
-      </div>`
-    )
-    .join('');
-  listEl.querySelectorAll('.row').forEach((row) => {
-    row.onclick = () => {
-      const p = row.dataset.path;
-      if (row.dataset.dir === 'true') openPath(p);
-      else {
-        const entry = entries.find(e => e.path === p);
-        preview(p, row.querySelector('.name').textContent, entry);
-      }
-    };
-  });
-};
-
-// 初始化登录状态
-updateLoginUI();
-
-openPath('/');
+    const cfg = await apiGet('/api/config');
+    if (cfg && cfg.title) state.title = cfg.title;
+  } catch (_) {}
+  render();
+  browse('/');
+}
+init();

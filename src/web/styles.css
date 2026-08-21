@@ -503,6 +503,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 
 /* 列表行垂直居中强化 */
 .row td { vertical-align: middle; }
+.row td.name { line-height: 1; }
 .row .name .label { display: inline-flex; align-items: center; line-height: 1; gap: 8px; }
 .row .name .label .glyph { line-height: 0; }
 

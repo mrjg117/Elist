@@ -113,15 +113,23 @@ npm run deploy
 {
   "users": [
     {
-      "user_id": "user@org.com",
+      "user_id": "alice@org.com",
       "mounts": [
-        { "path": "/od1", "root": "/", "title": "我的网盘" },
-        { "path": "/od1/photos", "root": "/Photos", "title": "照片", "e5rnl": true }
+        { "path": "/alice", "root": "/", "title": "Alice 的网盘" }
+      ]
+    },
+    {
+      "user_id": "bob@org.com",
+      "mounts": [
+        { "path": "/bob", "root": "/", "title": "Bob 的网盘" },
+        { "path": "/bob/photos", "root": "/Photos", "title": "照片", "e5rnl": true }
       ]
     }
   ]
 }
 ```
+
+> 一个 `AUTH_<NAME>` 应用证书可授权访问多位用户：在 `users` 数组里写多个 `user_id` 即可，每个用户的 `mounts` 独立挂载到不同前缀（如上 `alice@org.com` 与 `bob@org.com`）。
 
 **挂载项字段：**
 

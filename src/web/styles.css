@@ -217,9 +217,9 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }
-/* 关键：name 与 label 都 flex 居中，SVG 与文字基线对齐 */
-.row .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.row .name .label { display: flex; align-items: center; gap: 9px; min-width: 0; }
+/* 关键：td.name 保持 table-cell(vertical-align:middle)，图标/文字由内部 .label inline-flex 对齐 */
+.row .name { min-width: 0; }
+.row .name .label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .row .name .label .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .meta { color: var(--text-dim); font-size: 13px; }
 .row .size, .row .mod { color: var(--text-dim); white-space: nowrap; }

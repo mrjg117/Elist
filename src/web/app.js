@@ -373,19 +373,19 @@ function renderList() {
     const ic = entryIcon(e);
     const ck = state.selectMode
       ? `<td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>` : '';
+    const meta = state.selectMode ? '' : `<td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td><td class="mod">${esc(fmtDate(e.modified))}</td>`;
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       ${ck}
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
-      <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
-      <td class="mod">${esc(fmtDate(e.modified))}</td>
+      ${meta}
       <td class="acts">${itemActionsHtml(e)}</td>
     </tr>`;
   }).join('');
   const thCk = state.selectMode ? '<th class="ck"></th>' : '';
+  const thMeta = state.selectMode ? '' : '<th data-sort="size">大小</th><th data-sort="time">修改时间</th>';
   return `<table class="list">
     <thead><tr>
-      ${thCk}<th data-sort="name">名称</th><th data-sort="size">大小</th>
-      <th data-sort="time">修改时间</th><th></th>
+      ${thCk}<th data-sort="name">名称</th>${thMeta}<th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;

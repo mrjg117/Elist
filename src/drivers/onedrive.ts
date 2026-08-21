@@ -154,7 +154,7 @@ export class OneDriveDriver extends BaseDriver implements Driver {
 
   async readText(rest: string): Promise<string | null> {
     const token = await this.getToken();
-    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+    const r = await backoffFetchRaw(this.itemAddr(this.toAccountPath(rest)) + '/content', {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (r.status === 404) return null;
@@ -164,7 +164,7 @@ export class OneDriveDriver extends BaseDriver implements Driver {
 
   async readBinary(rest: string): Promise<ArrayBuffer | null> {
     const token = await this.getToken();
-    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+    const r = await backoffFetchRaw(this.itemAddr(this.toAccountPath(rest)) + '/content', {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (r.status === 404) return null;
@@ -174,7 +174,7 @@ export class OneDriveDriver extends BaseDriver implements Driver {
 
   async writeBinary(rest: string, content: ArrayBuffer): Promise<void> {
     const token = await this.getToken();
-    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+    const r = await backoffFetchRaw(this.itemAddr(this.toAccountPath(rest)) + '/content', {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -187,7 +187,7 @@ export class OneDriveDriver extends BaseDriver implements Driver {
 
   async writeText(rest: string, content: string): Promise<void> {
     const token = await this.getToken();
-    const r = await fetch(this.itemAddr(this.toAccountPath(rest)) + '/content', {
+    const r = await backoffFetchRaw(this.itemAddr(this.toAccountPath(rest)) + '/content', {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -290,4 +290,17 @@ async function backoffFetch(url: string, init: RequestInit, attempt = 0): Promis
   }
   if (!r.ok) throw new Error(`Graph error: ${r.status} ${await r.text()}`);
   return r.json();
+}
+
+/** 带退避的 fetch，返回原始 Response（用于写操作）。 */
+async function backoffFetchRaw(url: string, init: RequestInit, attempt = 0): Promise<Response> {
+  const r = await fetch(url, init);
+  // 429 限流、503 服务不可用、以及其他 5xx 服务端错误都重试
+  if (r.status === 429 || r.status === 503 || (r.status >= 500 && r.status < 600)) {
+    if (attempt > 4) throw new Error(`OD error: ${r.status}`);
+    const wait = Math.min(2 ** attempt * 500, 8000);
+    await new Promise((res) => setTimeout(res, wait));
+    return backoffFetchRaw(url, init, attempt + 1);
+  }
+  return r;
 }

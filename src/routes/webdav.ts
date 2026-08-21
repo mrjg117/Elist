@@ -4,9 +4,11 @@ import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
 import { checkPathPassword, MARKER_FILES } from '../lib/acl';
 import { getMounts, findMount } from '../config';
+import { normalize } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { loadXlsxConfig } from './fs';
 import { extractAdminPassword } from '../lib/auth';
+import { constantTimeCompare } from '../lib/acl';
 
 /**
  * WebDAV handler（挂载在 /dav/*）。
@@ -59,7 +61,7 @@ function collectPws(c: Context<{ Bindings: Env }>): string[] {
 
 export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   const url = new URL(c.req.url);
-  const storagePath = decodeURIComponent(url.pathname.replace(/^\/dav/, '')) || '/';
+  const storagePath = normalize(decodeURIComponent(url.pathname.replace(/^\/dav/, '')) || '/');
   const method = c.req.method.toUpperCase();
 
   const baseUrl = `${url.protocol}//${url.host}/dav`;
@@ -101,106 +103,94 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   if (method === 'PROPFIND') {
     const depth = c.req.header('Depth') || '1';
     
-    // 尝试列出目录内容，如果失败则可能是文件
+    // 尝试列出目录内容
     let entries: Entry[] = [];
-    let isDir = true;
-    let selfEntry: Entry | null = null;
+    let isDir = false;
     
     try {
-      entries = (await driver.list(rest)).filter((e) => !MARKER_FILES.has(e.name));
+      entries = await driver.list(rest);
+      isDir = true;
     } catch {
-      // list 失败，可能是文件路径，尝试获取文件元数据
-      isDir = false;
+      // 如果不是目录，检查是否是文件
       try {
-        // 尝试获取文件信息
         const link = await driver.link(rest);
-        selfEntry = {
-          name: rest.split('/').pop() || '',
-          path: rest,
+        // 是文件，返回文件信息
+        entries = [{
+          name: storagePath.split('/').pop() || '',
+          path: storagePath,
           isDir: false,
-          size: 0, // 无法获取实际大小
-          modified: '', // 无法获取实际修改时间
-        };
+        }];
       } catch {
-        // 获取失败，返回空信息
+        return c.body(null, 404);
       }
     }
     
-    const includeSelf = depth !== '0';
-    const xml = buildPropfind(baseUrl, storagePath, entries, includeSelf, isDir, selfEntry);
-    return new Response(xml, {
-      status: 207,
-      headers: {
-        'Content-Type': 'application/xml; charset=utf-8',
-        DAV: '1, 2',
-      },
+    // 过滤隐藏条目和标记文件
+    const visible = entries.filter(e => !MARKER_FILES.has(e.name));
+    
+    const xml = buildPropfind(baseUrl, storagePath, visible, isDir, depth);
+    return c.body(xml, 207, {
+      'Content-Type': 'application/xml; charset=utf-8',
     });
   }
 
-  // 写操作需要管理员验证（从 xlsx 配置读取密码）
-  const adminPassword = c.req.header('X-Admin-Password') || extractAdminPassword(c);
+  // 写操作需要管理员密码
+  const adminPassword = extractAdminPassword(c);
   const expectedPassword = xlsxConfig.getConfig('admin_password');
-  if (!adminPassword || !expectedPassword || expectedPassword !== adminPassword) {
+  
+  if (!adminPassword || !expectedPassword || !constantTimeCompare(adminPassword, expectedPassword)) {
     return c.body(null, 401, {
       'Content-Type': 'text/plain; charset=utf-8',
       'WWW-Authenticate': 'Basic realm="Elist Admin"',
     });
   }
 
-  // PUT: 上传文件
   if (method === 'PUT') {
-    if (!driver.writeText && !driver.writeBinary) {
-      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+    if (!driver.writeText) {
+      return c.body(null, 501, { 'Content-Type': 'text/plain' });
     }
-    const body = await c.req.arrayBuffer();
-    const contentType = c.req.header('Content-Type') || 'application/octet-stream';
-    if (contentType.startsWith('text/') && driver.writeText) {
-      const text = new TextDecoder().decode(body);
-      await driver.writeText(rest, text);
-    } else if (driver.writeBinary) {
-      await driver.writeBinary(rest, body);
-    } else {
-      return c.body(null, 501);
-    }
+    const body = await c.req.text();
+    await driver.writeText(rest, body);
     return c.body(null, 201);
   }
 
-  // MKCOL: 创建目录
   if (method === 'MKCOL') {
     if (!driver.mkdir) {
-      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+      return c.body(null, 501, { 'Content-Type': 'text/plain' });
     }
     await driver.mkdir(rest);
     return c.body(null, 201);
   }
 
-  // DELETE: 删除文件/目录
   if (method === 'DELETE') {
     if (!driver.delete) {
-      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+      return c.body(null, 501, { 'Content-Type': 'text/plain' });
     }
     await driver.delete(rest);
     return c.body(null, 204);
   }
 
-  // MOVE: 移动/重命名
   if (method === 'MOVE') {
     if (!driver.move) {
-      return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
+      return c.body(null, 501, { 'Content-Type': 'text/plain' });
     }
-    const destination = c.req.header('Destination');
+    const destination = c.req.header('Destination') || '';
     if (!destination) {
-      return c.body(null, 400);
+      return c.body(null, 400, { 'Content-Type': 'text/plain' });
     }
+    
+    // 解析 Destination URL
     const destUrl = new URL(destination);
-    const destPath = decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/';
-    const destMountResult = findMount(getMounts(c.env), destPath);
-    if (!destMountResult || destMountResult.mount.mount !== mount.mount) {
-      return c.body(null, 400); // 不支持跨挂载点移动
+    const destPath = normalize(decodeURIComponent(destUrl.pathname.replace(/^\/dav/, '')) || '/');
+    
+    // 检查目标路径是否在同一挂载点
+    const destMount = findMount(getMounts(c.env), destPath);
+    if (!destMount || destMount.mount.mount !== mount.mount) {
+      return c.body(null, 502, { 'Content-Type': 'text/plain' });
     }
-    // 使用 findMount 计算的 rest（已处理根挂载 '/' 的情况）
-    const destRest = destMountResult.rest;
-    await driver.move(rest, destRest);
+    
+    const targetRest = toRest(destPath, destMount.mount);
+    await driver.move(rest, targetRest);
     return c.body(null, 201);
   }
 

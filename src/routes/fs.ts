@@ -313,7 +313,8 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(normalizedPath), pws, readText, fresh);
+  // 同时校验文件路径本身和父目录路径（支持文件级密码）
+  const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -338,7 +339,8 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  const gate = await checkPathPassword(parentDir(normalizedPath), pws, readText, fresh);
+  // 同时校验文件路径本身和父目录路径（支持文件级密码）
+  const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
   if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
 
   const url = await driver.link(rest);
@@ -431,9 +433,11 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
   // 根目录搜索：遍历所有挂载点，合并结果
   if (path === '/') {
     const all = searchListings(q);
-    // 过滤：只返回用户有权限访问的目录
+    // 过滤：只返回用户有权限访问且未隐藏的目录
     const matched = [];
     for (const entry of all) {
+      // 过滤隐藏条目
+      if (await isHidden(entry.path)) continue;
       const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
       const gate = await checkPathPassword(parentPath, pws);
       if (gate.ok) {
@@ -450,6 +454,8 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const all = searchListings(q).filter((e) => e.path.startsWith(mount.mount));
   const matched = [];
   for (const entry of all) {
+    // 过滤隐藏条目
+    if (await isHidden(entry.path)) continue;
     const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
     const gate = await checkPathPassword(parentPath, pws);
     if (gate.ok) {

@@ -299,28 +299,68 @@ export class S3Driver extends BaseDriver implements Driver {
         throw new Error(`S3 move failed: source not found`);
       }
 
-      // 递归复制和删除（并发处理，每批 10 个）
+      // 递归复制和删除（并发处理，每批 10 个，带重试）
       const BATCH_SIZE = 10;
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY_MS = 1000;
+
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (key) => {
           const newKey = targetPrefix + key.slice(sourcePrefix.length);
-          const newCopyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(newKey)}`;
-          const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
-          newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(key)}`;
-          const newCopyResp = await fetch(newCopyUrl, {
-            method: 'PUT',
-            headers: newCopyHeaders,
-          });
-          if (!newCopyResp.ok) throw new Error(`S3 copy failed: ${newCopyResp.status}`);
+          
+          // 复制操作（带重试）
+          let copySuccess = false;
+          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+              const newCopyUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(newKey)}`;
+              const newCopyHeaders = await this.signHeaders('PUT', newCopyUrl, {}, EMPTY_SHA256);
+              newCopyHeaders['x-amz-copy-source'] = `/${this.bucket}/${encodeS3Key(key)}`;
+              const newCopyResp = await fetch(newCopyUrl, {
+                method: 'PUT',
+                headers: newCopyHeaders,
+              });
+              if (newCopyResp.ok) {
+                copySuccess = true;
+                break;
+              }
+              // 5xx 错误可重试
+              if (newCopyResp.status >= 500 && attempt < MAX_RETRIES - 1) {
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+                continue;
+              }
+              throw new Error(`S3 copy failed: ${newCopyResp.status}`);
+            } catch (err) {
+              if (attempt === MAX_RETRIES - 1) throw err;
+              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+            }
+          }
+          
+          if (!copySuccess) {
+            throw new Error(`S3 copy failed after ${MAX_RETRIES} attempts`);
+          }
 
-          const newDeleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
-          const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
-          const newDeleteResp = await fetch(newDeleteUrl, {
-            method: 'DELETE',
-            headers: newDeleteHeaders,
-          });
-          if (!newDeleteResp.ok) throw new Error(`S3 delete source failed: ${newDeleteResp.status}`);
+          // 删除操作（带重试）
+          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+              const newDeleteUrl = `${this.endpoint}/${this.bucket}/${encodeS3Key(key)}`;
+              const newDeleteHeaders = await this.signHeaders('DELETE', newDeleteUrl, {}, EMPTY_SHA256);
+              const newDeleteResp = await fetch(newDeleteUrl, {
+                method: 'DELETE',
+                headers: newDeleteHeaders,
+              });
+              if (newDeleteResp.ok) return;
+              // 5xx 错误可重试
+              if (newDeleteResp.status >= 500 && attempt < MAX_RETRIES - 1) {
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+                continue;
+              }
+              throw new Error(`S3 delete source failed: ${newDeleteResp.status}`);
+            } catch (err) {
+              if (attempt === MAX_RETRIES - 1) throw err;
+              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (attempt + 1)));
+            }
+          }
         }));
       }
     } else {

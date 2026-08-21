@@ -452,7 +452,7 @@ function isDriveRoot(path) {
 function entryMenu(entry) {
   const driveRoot = isDriveRoot(entry.path);
   const opButtons = driveRoot
-    ? `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>`
+    ? `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>`
     : `<button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
        <button class="btn block" data-op="move">${ICON.move}<span>移动</span></button>
        <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/取消隐藏</span></button>
@@ -635,7 +635,6 @@ function adminMenu() {
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>管理员</h3>
-    <div class="field"><div class="notice">已登录。新建文件夹在工具栏「新建」；目录密码/隐藏/重命名/移动/删除在条目右侧 ⋯ 菜单操作；设置与保存均自动回写。</div></div>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
       <button class="btn block danger" id="logout">${ICON.del}<span>登出</span></button>
     </div>`;

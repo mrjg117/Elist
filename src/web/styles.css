@@ -219,15 +219,20 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   .list th.size, .list td.size,
   .list th.mod, .list td.mod { width: auto; }
 }
-/* 链接/下载/操作列：无边框图标按钮（与列头风格一致） */
+/* 链接/下载/操作列：无边框图标按钮（列头与单元格统一同款 .btn.icon，尺寸/对齐/风格一致） */
 .list .op { text-align: center; white-space: nowrap; }
-.list .op .btn.icon {
+.list .op .btn.icon,
+.list th.op .btn.icon,
+.list th.acts .btn.icon {
   padding: 5px; border: none; background: transparent;
   color: var(--text-dim); border-radius: 8px;
 }
-.list .op .btn.icon:hover { background: var(--surface-2); color: var(--text); }
-.list th.op { cursor: pointer; }
-.list th.op svg, .list th.acts svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+.list .op .btn.icon:hover,
+.list th.op .btn.icon:hover,
+.list th.acts .btn.icon:hover { background: var(--surface-2); color: var(--text); }
+.list th.op, .list th.acts { cursor: pointer; text-align: center; }
+/* 列头图标按钮尺寸与单元格一致（统一 18px），避免列头/单元格大小不一、不对齐 */
+.list th.op .btn.icon svg, .list th.acts .btn.icon svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }

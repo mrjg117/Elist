@@ -388,11 +388,12 @@ function renderList() {
   }).join('');
   const files = state.entries.filter((e) => !e.isDir);
   const allChecked = files.length > 0 && files.every((e) => state.selected.has(e.path));
-  const actsTh = showActs ? `<th class="acts" title="操作">${ICON.menu}</th>` : '';
+  const actsTh = showActs ? `<th class="acts"><button class="btn sm icon" data-act="actshead" title="操作">${ICON.menu}</button></th>` : '';
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th class="op" data-batchlink title="复制选中文件链接">${ICON.external}</th><th class="op" data-batchdl title="下载选中文件">${ICON.download}</th>
+      <th class="op"><button class="btn sm icon" data-batchlink title="复制选中文件链接">${ICON.external}</button></th>
+      <th class="op"><button class="btn sm icon" data-batchdl title="下载选中文件">${ICON.download}</button></th>
       <th class="name" data-sort="name">名称</th>
       ${actsTh}
       <th class="size" data-sort="size">大小</th><th class="mod" data-sort="time">修改时间</th>

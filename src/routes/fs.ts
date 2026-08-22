@@ -128,6 +128,26 @@ export function getMountUserId(env: Env, accountName: string): string {
   }
 }
 
+/** 取某账号 MOUNT_<NAME> 配置中，命中 CONFIG_PATH 的挂载用户标识（user_id）。
+ *  同一 AUTH_ 账号下可能有多个 user（多邮箱/多盘），配置具体落在哪个 user 的盘里靠它区分。
+ *  优先取命中 CONFIG_PATH 的 user；否则取首个有挂载的 user。 */
+export function getConfigUser(env: Env, accountName: string): string {
+  const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
+  if (typeof raw !== 'string') return '';
+  try {
+    const cfg = JSON.parse(raw) as MountConfig;
+    const path = normalize(env.CONFIG_PATH || '/');
+    for (const user of cfg.users || []) {
+      for (const mp of user.mounts || []) {
+        if (normalize(mp.path || '/') === path) return user.user_id || '';
+      }
+    }
+    return cfg.users?.[0]?.user_id || '';
+  } catch {
+    return '';
+  }
+}
+
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发）。
  *  收敛为「单一确定性账号」读取（CONFIG_AUTH > first-onedrive > first-s3 > first），
  *  出网子请求从 N×2 降为 1~2 次，消除多账号遍历导致的 503。
@@ -196,28 +216,10 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       }
     }
 
-    // 3) 全账号均无配置文件：首跑，在确定性账号自动创建空白配置
-    try {
-      const account = accounts.find((a) => a.name === primary)!;
-      const { getDriverClass } = await import('../drivers/registry');
-      const DriverClass = getDriverClass(account.type);
-      if (DriverClass) {
-        const driver = new DriverClass();
-        await driver.init({
-          mount: '/',
-          root: configPath,
-          driver: account.type,
-          addition: account.auth,
-          user_id: getMountUserId(c.env, account.name),
-        }, c.env);
-        const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
-        await driver.writeBinary('/.elist.xlsx', content);
-        lastConfigAccount = primary;
-      }
-    } catch (e) {
-      console.error('Failed to auto-create .elist.xlsx:', e);
-    }
-    xlsxConfig.markLoaded();
+    // 3) 全账号均无配置文件：保持「未加载」状态，由 acl.ts 失败安全默认隐藏所有项。
+    //    绝不在此自动创建空 .elist.xlsx 并 markLoaded()——空配置会清空隐藏/密码规则，
+    //    导致根目录显示全部挂载盘（即最初好用的隐藏功能被误改没的根因）。首跑用户应自行
+    //    通过管理页保存配置来创建文件，届时 handleSaveConfig 会写回并 markLoaded()。
   })();
 
   try {
@@ -256,15 +258,18 @@ async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: 
   return { driver, rest: '/' };
 }
 
-/** 管理员页展示当前使用的配置文件位置（账号 + 路径），始终返回具体账号，绝不为「未确定」。 */
+/** 管理员页展示当前使用的配置文件位置（账号 + 命中用户 + 路径），始终返回具体值，绝不为「未确定」。
+ *  account 形如「d70d7245-… / admin@zh33.onmicrosoft.com」，让你一眼看清配置落在哪个账号的哪个 user 盘。 */
 export async function getConfigInfo(c: Context<{ Bindings: Env }>): Promise<{ account: string | null; path: string; loaded: boolean; dirty: boolean }> {
   if (!xlsxConfig.isLoaded()) {
     try { await loadXlsxConfig(c, false); } catch { /* 失败安全 */ }
   }
   const acc = lastConfigAccount || getConfigAccount(c);
+  const user = acc ? getConfigUser(c.env, acc) : '';
+  const accountLabel = acc ? (user ? `${acc} / ${user}` : acc) : null;
   const base = normalize(c.env.CONFIG_PATH || '/');
   const path = base === '/' ? '/.elist.xlsx' : base + '/.elist.xlsx';
-  return { account: acc, path, loaded: xlsxConfig.isLoaded(), dirty: xlsxConfig.isDirty() };
+  return { account: accountLabel, path, loaded: xlsxConfig.isLoaded(), dirty: xlsxConfig.isDirty() };
 }
 
 type SortKey = 'name' | 'time' | 'size' | 'type';

@@ -81,14 +81,41 @@ let pendingLoad: Promise<void> | null = null;
 // 记录上次实际读到 .elist.xlsx 的账号名，保存时优先写回同一位置，
 // 避免多账号下「读 A 账号 / 写 B 账号」导致隐藏/密码配置读不到（根目录仍显示已隐藏盘）。
 let lastConfigAccount: string | null = null;
-/** 保存配置时优先写回「刚读到的那个账号」，再回退到 configAuth / first-onedrive / first-s3 / first。 */
-export function getConfigSaveTargets(c: Context<{ Bindings: Env }>): string[] {
+/**
+ * 配置读写位置收敛为「同一个确定性账号」，根除多账号下读 A 写 B / 自动创建错位
+ * 导致的「无痕窗口偶发显示已隐藏挂载盘」（内存不统一）。
+ * 优先级：刚读到的账号(lastConfigAccount) > CONFIG_AUTH > :first-onedrive > :first-s3 > 第一个账号。
+ * 返回具体账号名数组（把 :first-onedrive 等占位解析成真实账号名）。
+ */
+function getResolvedConfigAccounts(c: Context<{ Bindings: Env }>): string[] {
+  const accounts = getAllAuthAccounts(c.env);
+  const tokens: string[] = [];
+  if (lastConfigAccount) tokens.push(lastConfigAccount);
   const configAuth = c.env.CONFIG_AUTH;
-  const targets: string[] = [];
-  if (lastConfigAccount) targets.push(lastConfigAccount);
-  if (configAuth) targets.push(configAuth);
-  targets.push(':first-onedrive', ':first-s3', ':first');
-  return [...new Set(targets)];
+  if (configAuth) tokens.push(configAuth);
+  tokens.push(':first-onedrive', ':first-s3', ':first');
+  const resolved: string[] = [];
+  for (const t of tokens) {
+    if (t.startsWith(':')) {
+      if (t === ':first-onedrive') {
+        const a = accounts.find((x) => x.type === 'onedrive');
+        if (a) resolved.push(a.name);
+      } else if (t === ':first-s3') {
+        const a = accounts.find((x) => x.type === 's3');
+        if (a) resolved.push(a.name);
+      } else if (t === ':first') {
+        if (accounts[0]) resolved.push(accounts[0].name);
+      }
+    } else {
+      resolved.push(t);
+    }
+  }
+  return [...new Set(resolved)];
+}
+
+/** 保存配置目标：与读取位置完全一致（同一确定性账号）。 */
+export function getConfigSaveTargets(c: Context<{ Bindings: Env }>): string[] {
+  return getResolvedConfigAccounts(c);
 }
 
 /** 取某账号在 MOUNT_<NAME> 配置中的 user_id（OneDrive app-only 鉴权必需）。
@@ -124,92 +151,61 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
   // 创建加载 Promise 并赋值给 pendingLoad
   pendingLoad = (async () => {
     const configPath = c.env.CONFIG_PATH || '/';
-    const configAuth = c.env.CONFIG_AUTH;
     const accounts = getAllAuthAccounts(c.env);
-    let hasError = false;
-
-    // 优先检测 CONFIG_AUTH 指定的账号
-    if (configAuth) {
-      const targetAccount = accounts.find(a => a.name === configAuth);
-      if (targetAccount) {
-        try {
-          const { getDriverClass } = await import('../drivers/registry');
-          const DriverClass = getDriverClass(targetAccount.type);
-          if (DriverClass) {
-          const driver = new DriverClass();
-          await driver.init({
-            mount: '/',
-            root: configPath,
-            driver: targetAccount.type,
-            addition: targetAccount.auth,
-            user_id: getMountUserId(c.env, targetAccount.name),
-          }, c.env);
-
-            const xlsxPath = '/.elist.xlsx';
-            const content = await driver.readBinary(xlsxPath);
-            if (content) {
-              const xlsxPassword = c.env.CONF_PW;
-              await xlsxConfig.parseXlsx(content, xlsxPassword);
-              lastConfigAccount = targetAccount.name; // 记录读到的账号，保存时写回同一位置
-              return;
-            }
-            // 文件不存在，继续尝试其他账号
-          }
-        } catch (e) {
-          // 读取失败（网络/权限等），记录错误但不继续遍历
-          // 因为 CONFIG_AUTH 明确指定了账号，其他账号的配置可能不适用
-          hasError = true;
-          console.error('Failed to load config from CONFIG_AUTH account:', e);
+    // 读/写/自动创建统一收敛到同一个确定性账号（getResolvedConfigAccounts），
+    // 根除多账号下「读 A 写 B / 自动创建空文件到别的账号」导致隐藏盘偶发暴露（内存不统一）。
+    const resolved = getResolvedConfigAccounts(c);
+    let found = false;
+    for (const acctName of resolved) {
+      const account = accounts.find((a) => a.name === acctName);
+      if (!account) continue;
+      try {
+        const { getDriverClass } = await import('../drivers/registry');
+        const DriverClass = getDriverClass(account.type);
+        if (!DriverClass) continue;
+        const driver = new DriverClass();
+        await driver.init({
+          mount: '/',
+          root: configPath,
+          driver: account.type,
+          addition: account.auth,
+          user_id: getMountUserId(c.env, account.name),
+        }, c.env);
+        const content = await driver.readBinary('/.elist.xlsx');
+        if (content) {
+          await xlsxConfig.parseXlsx(content, c.env.CONF_PW);
+          lastConfigAccount = account.name; // 记录实际读到配置的账号，保存/自动创建写回同一处
+          found = true;
+          return;
         }
+      } catch (e) {
+        console.error('loadXlsxConfig read failed for', account.name, e);
+        continue;
       }
     }
-
-    // 如果没有指定 CONFIG_AUTH 或指定账号没有配置文件，遍历其他账号
-    if (!configAuth || !hasError) {
-      for (const account of accounts) {
-        if (configAuth && account.name === configAuth) continue; // 已尝试过
-        try {
+    // 任何账号都没有 .elist.xlsx：在「第一个解析账号」自动创建空白配置并标记已加载。
+    // 关键：自动创建位置必须与保存位置一致（getResolvedConfigAccounts[0]）且记录 lastConfigAccount，
+    // 否则冷 isolate 会先读到这个空文件而漏掉隐藏项。
+    if (!found) {
+      try {
+        const target = resolved[0];
+        const account = accounts.find((a) => a.name === target);
+        if (account) {
           const { getDriverClass } = await import('../drivers/registry');
           const DriverClass = getDriverClass(account.type);
-          if (!DriverClass) continue;
-
-          const driver = new DriverClass();
-          await driver.init({
-            mount: '/',
-            root: configPath,
-            driver: account.type,
-            addition: account.auth,
-            user_id: getMountUserId(c.env, account.name),
-          }, c.env);
-
-          const xlsxPath = '/.elist.xlsx';
-          const content = await driver.readBinary(xlsxPath);
-          if (content) {
-            const xlsxPassword = c.env.CONF_PW;
-            await xlsxConfig.parseXlsx(content, xlsxPassword);
-            lastConfigAccount = account.name; // 记录读到的账号，保存时写回同一位置
-            return;
+          if (DriverClass) {
+            const driver = new DriverClass();
+            await driver.init({
+              mount: '/',
+              root: configPath,
+              driver: account.type,
+              addition: account.auth,
+              user_id: getMountUserId(c.env, account.name),
+            }, c.env);
+            const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
+            await driver.writeBinary('/.elist.xlsx', content);
+            lastConfigAccount = account.name;
           }
-        } catch (e) {
-          // 读取失败，记录但继续尝试下一个
-          hasError = true;
-          console.error('Failed to load config from account:', account.name, e);
-          continue;
-        }
-      }
-    }
-
-    // 没有找到 .elist.xlsx
-    // 如果有错误发生，不标记为已加载（保持安全状态）
-    // 否则在存储根自动创建空白 .elist.xlsx 并标记为已加载（空配置）
-    if (!hasError) {
-      try {
-        const configMount = await getConfigMount(c);
-        if (configMount) {
-          const { driver, rest } = configMount;
-          const xlsxPath = rest === '/' ? '/.elist.xlsx' : `${rest}/.elist.xlsx`;
-          const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
-          await driver.writeBinary(xlsxPath, content);
         }
       } catch (e) {
         console.error('Failed to auto-create .elist.xlsx:', e);
@@ -226,30 +222,20 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
   }
 }
 
-/** 获取配置文件存放的存储位置（根据 CONFIG_AUTH 环境变量） */
+/** 获取配置文件存放的存储位置：与读取位置完全一致（同一确定性账号）。 */
 async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: any; rest: string } | null> {
-  const configAuth = c.env.CONFIG_AUTH;
   const configPath = c.env.CONFIG_PATH || '/';
   const accounts = getAllAuthAccounts(c.env);
-
   if (accounts.length === 0) return null;
 
+  // 与 getResolvedConfigAccounts 一致的优先级，保证保存/清理位置 = 读取位置
+  const resolved = getResolvedConfigAccounts(c);
   let targetAccount: { name: string; type: string; auth: any } | null = null;
-
-  if (!configAuth) {
-    // 未配置，使用第一个存储账号
-    targetAccount = accounts[0];
-  } else if (configAuth === ':first-onedrive') {
-    // 查找第一个 OneDrive 存储
-    targetAccount = accounts.find(a => a.type === 'onedrive') || null;
-  } else if (configAuth === ':first-s3') {
-    // 查找第一个 S3 存储
-    targetAccount = accounts.find(a => a.type === 's3') || null;
-  } else {
-    // 指定存储账号名（如 OD1）
-    targetAccount = accounts.find(a => a.name === configAuth) || null;
+  for (const name of resolved) {
+    const a = accounts.find((x) => x.name === name);
+    if (a) { targetAccount = a; break; }
   }
-
+  if (!targetAccount) targetAccount = accounts[0];
   if (!targetAccount) return null;
 
   const { getDriverClass } = await import('../drivers/registry');

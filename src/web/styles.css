@@ -219,9 +219,14 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   .list th:nth-child(6), .list td:nth-child(6),
   .list th:nth-child(7), .list td:nth-child(7) { width: auto; }
 }
-/* 链接/下载/操作列：按钮图标居中 */
+/* 链接/下载/操作列：无边框图标按钮（与列头风格一致） */
 .list .op { text-align: center; white-space: nowrap; }
-.list .op .btn.icon { padding: 4px 6px; }
+.list .op .btn.icon {
+  padding: 4px 6px; border: none; background: transparent;
+  color: var(--text-dim); border-radius: 6px;
+}
+.list .op .btn.icon:hover { background: var(--surface-2); color: var(--text); }
+.list th.op { cursor: pointer; }
 .list th.op svg { width: 15px; height: 15px; display: inline-block; vertical-align: middle; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }

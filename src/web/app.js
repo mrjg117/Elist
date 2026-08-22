@@ -373,7 +373,7 @@ function renderList() {
     const ic = entryIcon(e);
     const isFile = !e.isDir;
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      <td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>
+      <td class="ck">${isFile ? `<input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/>` : ''}</td>
       <td class="op">${isFile ? `<button class="btn sm icon" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>` : ''}</td>
       <td class="op">${isFile ? `<button class="btn sm icon" data-act="dlrow" data-path="${esc(e.path)}" title="下载">${ICON.download}</button>` : ''}</td>
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
@@ -382,11 +382,12 @@ function renderList() {
       <td class="mod">${esc(fmtDate(e.modified))}</td>
     </tr>`;
   }).join('');
-  const allChecked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
+  const files = state.entries.filter((e) => !e.isDir);
+  const allChecked = files.length > 0 && files.every((e) => state.selected.has(e.path));
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th class="op" title="复制链接">${ICON.external}</th><th class="op" title="下载">${ICON.download}</th>
+      <th class="op" data-batchlink title="复制当前目录全部文件链接">${ICON.external}</th><th class="op" data-batchdl title="下载当前目录全部文件">${ICON.download}</th>
       <th data-sort="name">名称</th><th class="op" title="操作">${ICON.menu}</th>
       <th data-sort="size">大小</th><th data-sort="time">修改时间</th>
     </tr></thead>
@@ -400,7 +401,7 @@ function renderGrid() {
     const isImg = !e.isDir && mediaType(e.name) === 'image';
     const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      <span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>
+      ${e.isDir ? '' : `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>`}
       <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
       <div class="name">${esc(e.name)}${badgesHtml(e)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
@@ -421,13 +422,19 @@ function bindItems(c) {
       updateBatchUI();
     };
   });
-  // 表头全选
+  // 表头全选（仅文件，目录不可多选）
   const ckall = c.querySelector('.ckall');
   if (ckall) ckall.onchange = () => {
-    if (ckall.checked) state.entries.forEach((e) => state.selected.add(e.path));
-    else state.entries.forEach((e) => state.selected.delete(e.path));
+    const files = state.entries.filter((e) => !e.isDir);
+    if (ckall.checked) files.forEach((e) => state.selected.add(e.path));
+    else files.forEach((e) => state.selected.delete(e.path));
     updateBatchUI();
   };
+  // 链接/下载列头：批量复制/下载当前目录全部文件
+  const thLink = c.querySelector('[data-batchlink]');
+  if (thLink) thLink.onclick = (ev) => { ev.stopPropagation(); copyAllLinks(); };
+  const thDl = c.querySelector('[data-batchdl]');
+  if (thDl) thDl.onclick = (ev) => { ev.stopPropagation(); downloadAllFiles(); };
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
@@ -751,10 +758,39 @@ function updateBatchUI() {
   const cnt = document.getElementById('fb-count');
   if (cnt) cnt.textContent = `已选 ${state.selected.size}`;
   if (fb) fb.style.display = state.selected.size ? 'flex' : 'none';
-  // 行复选框与全选状态同步
+  // 行复选框与全选状态同步（全选只统计文件）
   document.querySelectorAll('.content .ckbox').forEach((cb) => { cb.checked = state.selected.has(cb.dataset.path); });
+  const files = state.entries.filter((e) => !e.isDir);
   const all = document.querySelector('.list .ckall');
-  if (all) all.checked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
+  if (all) all.checked = files.length > 0 && files.every((e) => state.selected.has(e.path));
+}
+
+// 复制/下载当前目录全部文件（链接/下载列头点击）
+async function copyAllLinks() {
+  const files = state.entries.filter((e) => !e.isDir);
+  if (!files.length) { alertModal('提示', '当前目录没有文件', 'warn'); return; }
+  const urls = [];
+  for (const f of files) { try { urls.push(await getLink(f.path)); } catch { /* 跳过 */ } }
+  if (!urls.length) { alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
+  const text = urls.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    alertModal('已复制', `已复制 ${urls.length} 个链接到剪贴板`, 'ok');
+  } catch {
+    const i = document.createElement('textarea');
+    i.value = text; document.body.appendChild(i); i.select();
+    document.execCommand('copy'); i.remove();
+    alertModal('已复制', `已复制 ${urls.length} 个链接`, 'ok');
+  }
+}
+async function downloadAllFiles() {
+  const files = state.entries.filter((e) => !e.isDir);
+  if (!files.length) { alertModal('提示', '当前目录没有文件', 'warn'); return; }
+  let ok = 0;
+  for (const f of files) {
+    try { window.open(await getLink(f.path), '_blank'); ok++; } catch { /* 跳过 */ }
+  }
+  alertModal('已触发', `已为 ${ok}/${files.length} 个文件打开下载（若被浏览器拦截请用复制链接）`, 'ok');
 }
 async function copySelectedLinks() {
   const paths = [...state.selected];

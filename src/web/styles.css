@@ -222,8 +222,8 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 /* 链接/下载/操作列：无边框图标按钮（与列头风格一致） */
 .list .op { text-align: center; white-space: nowrap; }
 .list .op .btn.icon {
-  padding: 4px 6px; border: none; background: transparent;
-  color: var(--text-dim); border-radius: 6px;
+  padding: 5px; border: none; background: transparent;
+  color: var(--text-dim); border-radius: 8px;
 }
 .list .op .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op { cursor: pointer; }
@@ -288,6 +288,37 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 /* 卡片缩略图：大图标但受控 */
 .card .thumb svg { width: 72px; height: 72px; }
 .drive svg, .side-foot .btn svg { width: 20px; height: 20px; }
+
+/* ============ 图标按钮统一风格：无框 + 悬浮圆角正方型高亮 ============
+   覆盖行内 ⋯ / 卡片菜单 / 侧栏管理员·主题 / 预览工具 / 批量头·浮动条 / 批量栏，
+   与列表行链接·下载图标一致：默认无边框透明，hover 给圆角正方型（border-radius:8px）背景。
+   仅影响「图标型」按钮，不动 modal 内带文字的 primary/ghost/danger 主操作按钮语义。 */
+.row-menu,
+.card-menu,
+.side-foot #admin, .side-foot #theme,
+.preview-bar .btn, .pv-tools .btn,
+.head-batch .btn, .float-batch .btn, .batch-bar .btn,
+.fab-acts .btn {
+  border: none !important;
+  background: transparent !important;
+  color: var(--text-dim);
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+.row-menu:hover, .card-menu:hover,
+.side-foot #admin:hover, .side-foot #theme:hover,
+.preview-bar .btn:hover, .pv-tools .btn:hover,
+.head-batch .btn:hover, .float-batch .btn:hover, .batch-bar .btn:hover,
+.fab-acts .btn:hover {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+}
+/* 侧栏管理员/主题图标按钮保留文字左对齐（block 语义），仅去掉边框 */
+.side-foot #admin, .side-foot #theme { justify-content: flex-start; width: 100%; }
+/* 行内 ⋯ 按钮收紧方形尺寸 */
+.row-menu { padding: 5px 6px; }
+.card-menu { padding: 4px 7px; }
 
 /* ---------------- 浮动操作按钮 ---------------- */
 .fab-acts { display: inline-flex; gap: 5px; }
@@ -548,3 +579,25 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 
 /* 图片默认适应预览窗口 */
 .image-container img { object-fit: contain; }
+
+/* ============ 管理员弹窗：配置文件位置 + E5 测试结果 ============ */
+.admin-config-info {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 14px;
+  font-size: 13px;
+}
+.admin-config-info .cfg-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.admin-config-info .cfg-label { color: var(--text-dim); flex: 0 0 auto; }
+.admin-config-info .cfg-val { color: var(--text); font-family: var(--mono); word-break: break-all; text-align: right; }
+.e5-result {
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
+  font-size: 13px; line-height: 1.6; border: 1px solid var(--border);
+  background: var(--surface); max-height: 320px; overflow: auto;
+}
+.e5-result.ok { border-color: var(--ok); background: rgba(62, 207, 142, 0.10); }
+.e5-result.fail { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+.e5-result .e5-sum { font-weight: 600; margin-bottom: 6px; }
+.e5-result .e5-acc { padding: 5px 0; border-top: 1px solid var(--border); }
+.e5-result .e5-acc:first-of-type { border-top: none; }
+.e5-result .e5-acc-h { color: var(--text); }
+.e5-result .e5-fails { color: var(--danger); font-family: var(--mono); font-size: 12px; margin-top: 3px; }

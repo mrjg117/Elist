@@ -31,6 +31,7 @@ const ICON = {
   txt: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5L13 3.5zM9 13v2h6v-2H9z"/></svg>',
   img: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm4 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM5 17l4-5 3 3 3-4 4 6H5z"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>',
 };
 
 const state = {
@@ -664,14 +665,63 @@ async function login() {
   }
 }
 
-function adminMenu() {
+async function adminMenu() {
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>管理员</h3>
+    <div class="admin-config-info" id="cfgInfo">
+      <div class="cfg-row"><span class="cfg-label">配置文件账号</span><span class="cfg-val" id="cfgAccount">加载中…</span></div>
+      <div class="cfg-row"><span class="cfg-label">配置文件路径</span><span class="cfg-val" id="cfgPath">—</span></div>
+    </div>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
+      <button class="btn block" id="e5test">${ICON.refresh}<span>测试所有 E5 续期 API</span></button>
       <button class="btn block danger" id="logout">${ICON.del}<span>登出</span></button>
-    </div>`;
+    </div>
+    <div id="e5result" class="e5-result" style="display:none"></div>`;
   const bd = openModal(m);
+  // 拉取当前配置文件位置
+  try {
+    const info = await apiAdminGet('/api/admin/status');
+    m.querySelector('#cfgAccount').textContent = info.account || '（无可用账号）';
+    m.querySelector('#cfgPath').textContent = info.path || '—';
+  } catch (e) {
+    m.querySelector('#cfgAccount').textContent = '获取失败';
+    m.querySelector('#cfgPath').textContent = e.message || '—';
+  }
+  m.querySelector('#e5test').onclick = async () => {
+    const btn = m.querySelector('#e5test');
+    const box = m.querySelector('#e5result');
+    btn.disabled = true;
+    box.style.display = 'block';
+    box.textContent = '正在真实跑全部 E5 续期 API（建/改/读/删）…';
+    try {
+      const r = await apiSend('/api/admin/e5rnl-test', {}, { admin: true });
+      if (!r.ok) {
+        box.className = 'e5-result fail';
+        box.textContent = '测试失败：' + (r.error || r.message || '未知错误');
+        btn.disabled = false;
+        return;
+      }
+      // 按账号汇总每 action 结果
+      let html = '<div class="e5-sum">测试完成，按账号结果：</div>';
+      for (const item of r.results) {
+        const ok = item.results.filter((x) => x.ok && !x.skipped).length;
+        const total = item.results.filter((x) => !x.skipped).length;
+        const fails = item.results.filter((x) => !x.ok && !x.skipped);
+        html += `<div class="e5-acc"><div class="e5-acc-h">${esc(item.key)} — ${ok}/${total} 成功</div>`;
+        if (fails.length) {
+          html += '<div class="e5-fails">' + fails.map((f) => `${esc(f.action)}: ${esc(f.error || '')}`).join('<br/>') + '</div>';
+        }
+        html += '</div>';
+      }
+      box.className = 'e5-result ok';
+      box.innerHTML = html;
+    } catch (e) {
+      box.className = 'e5-result fail';
+      box.textContent = '请求异常：' + e.message;
+    }
+    btn.disabled = false;
+  };
   m.querySelector('#logout').onclick = () => {
     closeModal(bd);
     state.admin = false; state.adminPw = '';

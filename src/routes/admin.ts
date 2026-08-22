@@ -234,6 +234,33 @@ async function getConfigDriver(env: Env, target: string, configPath: string): Pr
     addition: targetAccount.auth,
     user_id: getMountUserId(env, targetAccount.name), // OneDrive app-only 必需，缺失导致保存位置全部失败
   }, env);
-  
+
   return driver;
+}
+
+// GET /api/admin/status —— 返回当前配置文件位置（账号 + 路径 + 加载/脏标记）
+export async function handleConfigStatus(c: Context<{ Bindings: Env }>) {
+  if (!(await isAuthenticated(c))) {
+    return c.json({ error: '未授权' }, 401);
+  }
+  const { getConfigInfo } = await import('./fs');
+  const info = await getConfigInfo(c);
+  return c.json(info);
+}
+
+// POST /api/admin/e5rnl-test —— 真实跑一遍所有 E5 续期 API（建/改/读/删），与 cron 等价（非连通性 ping）
+export async function handleE5rnlTest(c: Context<{ Bindings: Env }>) {
+  if (!(await isAuthenticated(c))) {
+    return c.json({ error: '未授权' }, 401);
+  }
+  try {
+    const { runRenewalTest } = await import('../e5rnl');
+    const results = await runRenewalTest(c.env);
+    if (!results || results.length === 0) {
+      return c.json({ ok: false, message: '未找到任何 OneDrive 账号，无法测试' });
+    }
+    return c.json({ ok: true, results });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message || String(e) }, 500);
+  }
 }

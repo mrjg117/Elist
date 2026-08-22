@@ -100,6 +100,35 @@ export async function handleScheduled(env: Env): Promise<void> {
 }
 
 /**
+ * 手动「测试所有 E5 续期 API」——与 cron 触发等价，但强制全跑（绕过 RUN_PROBABILITY），
+ * 并对每个账号真实执行建/改/读/删续期文件（不是连通性 ping）。
+ * 返回按账号汇总的每 action 结果，供管理员页展示是否全部 API 正常工作。
+ */
+export async function runRenewalTest(env: Env): Promise<Array<{ key: string; results: any[] }>> {
+  const mounts = getMounts(env);
+  const accounts = extractOneDriveAccounts(mounts);
+  if (accounts.length === 0) return [];
+
+  // 测试用调度参数：拉满预算、较大并发、稍长超时，确保真正把建/改/读/删都跑一遍
+  const options = {
+    maxApiCalls: Number(env.E5RNL_MAX_API_CALLS ?? 48),
+    maxRuntimeMs: Number(env.E5RNL_MAX_RUNTIME_MS ?? 25000),
+    concurrency: Number(env.E5RNL_CONCURRENCY ?? 6),
+    actionDelayMinMs: Number(env.E5RNL_ACTION_DELAY_MIN_MS ?? 0),
+    actionDelayMaxMs: Number(env.E5RNL_ACTION_DELAY_MAX_MS ?? 300),
+  };
+
+  const getToken = async (account: RenewalConfig) => getOneDriveToken(account);
+  const resultsMap = await runRenewalForAccounts(accounts, getToken, options);
+
+  const out: Array<{ key: string; results: any[] }> = [];
+  for (const [key, results] of resultsMap.entries()) {
+    out.push({ key, results });
+  }
+  return out;
+}
+
+/**
  * Token 缓存，避免每次 API 调用都重新获取 token。
  * 缓存键：tenant_id:user_id
  */

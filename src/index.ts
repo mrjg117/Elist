@@ -4,7 +4,7 @@ import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
 import { handleList, handleDownload, handleSearch, handleLink, handleConfigSave, handleConfigClear } from './routes/fs';
-import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig } from './routes/admin';
+import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig, handleConfigStatus, handleE5rnlTest } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
 import { handleScheduled } from './e5rnl';
@@ -49,6 +49,8 @@ app.post('/api/admin/logout', handleLogout);
 app.get('/api/admin/config', handleGetConfig);
 app.post('/api/admin/config', handleSetConfig);
 app.post('/api/admin/save', handleSaveConfig);
+app.get('/api/admin/status', handleConfigStatus);
+app.post('/api/admin/e5rnl-test', handleE5rnlTest);
 
 // 文件管理API（需要管理员权限）
 app.route('/api/file', fileManagementApp);

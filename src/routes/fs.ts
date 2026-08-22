@@ -18,6 +18,11 @@ function parentDir(path: string): string {
   const i = path.lastIndexOf('/');
   return i <= 0 ? '/' : path.slice(0, i);
 }
+/** 取文件名（含扩展名）。 */
+function basenameOf(path: string): string {
+  const i = path.lastIndexOf('/');
+  return path.slice(i + 1) || 'download';
+}
 
 /** 完整展示路径 -> 盘内相对路径(rest)，交给驱动 readText。 */
 function toRest(fullPath: string, mount: Mount): string {
@@ -73,6 +78,18 @@ export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string
 
 // in-flight 去重：防止并发请求重复加载配置
 let pendingLoad: Promise<void> | null = null;
+// 记录上次实际读到 .elist.xlsx 的账号名，保存时优先写回同一位置，
+// 避免多账号下「读 A 账号 / 写 B 账号」导致隐藏/密码配置读不到（根目录仍显示已隐藏盘）。
+let lastConfigAccount: string | null = null;
+/** 保存配置时优先写回「刚读到的那个账号」，再回退到 configAuth / first-onedrive / first-s3 / first。 */
+export function getConfigSaveTargets(c: Context<{ Bindings: Env }>): string[] {
+  const configAuth = c.env.CONFIG_AUTH;
+  const targets: string[] = [];
+  if (lastConfigAccount) targets.push(lastConfigAccount);
+  if (configAuth) targets.push(configAuth);
+  targets.push(':first-onedrive', ':first-s3', ':first');
+  return [...new Set(targets)];
+}
 
 /** 取某账号在 MOUNT_<NAME> 配置中的 user_id（OneDrive app-only 鉴权必需）。
  *  优先取命中 CONFIG_PATH 的挂载用户；否则取首个有挂载的用户。
@@ -133,6 +150,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
             if (content) {
               const xlsxPassword = c.env.CONF_PW;
               await xlsxConfig.parseXlsx(content, xlsxPassword);
+              lastConfigAccount = targetAccount.name; // 记录读到的账号，保存时写回同一位置
               return;
             }
             // 文件不存在，继续尝试其他账号
@@ -169,6 +187,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
           if (content) {
             const xlsxPassword = c.env.CONF_PW;
             await xlsxConfig.parseXlsx(content, xlsxPassword);
+            lastConfigAccount = account.name; // 记录读到的账号，保存时写回同一位置
             return;
           }
         } catch (e) {
@@ -307,8 +326,8 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     // 检查每个挂载根路径是否隐藏（从 xlsx 配置读取）
     const visibleRoots = await Promise.all(
       roots.map(async (r) => {
-        const hidden = await isHidden(r.path, undefined, fresh);
-        const locked = !!(await xlsxConfig.getPassword(r.path));
+        const hidden = await isHidden(normalize(r.path), undefined, fresh);
+        const locked = !!(await xlsxConfig.getPassword(normalize(r.path)));
         return { root: r, hidden, locked };
       })
     );
@@ -344,15 +363,16 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     for (const e of entries) {
       visible.push({
         ...e,
-        hidden: await isHidden(e.path, undefined, fresh),
-        locked: !!(await xlsxConfig.getPassword(e.path)),
+        hidden: await isHidden(normalize(e.path), undefined, fresh),
+        locked: !!(await xlsxConfig.getPassword(normalize(e.path))),
       });
     }
   } else {
-    visible = await filterHidden(path, entries, readText, fresh);
+    const normEntries = entries.map((e) => ({ ...e, path: normalize(e.path) }));
+    visible = await filterHidden(normalize(path), normEntries, readText, fresh);
     // 未登录用户：隐藏的已过滤；剩余条目带 locked（加密）标记，前端显示 🔒（不泄露 hidden）
     const out = [];
-    for (const e of visible) out.push({ ...e, locked: !!(await xlsxConfig.getPassword(e.path)) });
+    for (const e of visible) out.push({ ...e, locked: !!(await xlsxConfig.getPassword(normalize(e.path))) });
     visible = out;
   }
   visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
@@ -417,6 +437,27 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
+
+  // 代理下载模式（?proxy=1）：worker 服务端拉取直链并流式回传字节 + Content-Disposition，
+  // 前端走同域 fetch→blob 触发下载，绝不跳转当前页、不弹多窗、不受跨域 CORS 限制。
+  // 大文件上行 fetch 失败或上游非 2xx 时回退到 302 直链（浏览器原生下载）。
+  if (c.req.query('proxy') === '1') {
+    try {
+      const upstream = await fetch(url);
+      if (!upstream.ok && upstream.status !== 206) throw new Error('upstream ' + upstream.status);
+      const headers = new Headers();
+      const ct = upstream.headers.get('Content-Type');
+      if (ct) headers.set('Content-Type', ct);
+      const cl = upstream.headers.get('Content-Length');
+      if (cl) headers.set('Content-Length', cl);
+      headers.set('Cache-Control', cc);
+      const fname = basenameOf(normalizedPath);
+      headers.set('Content-Disposition', `attachment; filename="${encodeURIComponent(fname)}"; filename*=UTF-8''${encodeURIComponent(fname)}`);
+      return new Response(upstream.body, { status: 200, headers });
+    } catch {
+      // 回退 302 直链
+    }
+  }
   return new Response(null, {
     status: 302,
     headers: { Location: url, 'Cache-Control': cc },
@@ -510,7 +551,7 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
     const matched = [];
     for (const entry of all) {
       // 过滤隐藏条目（管理员放行）
-      if (!admin && (await isHidden(entry.path))) continue;
+      if (!admin && (await isHidden(normalize(entry.path)))) continue;
       const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
       if (admin) { matched.push(entry); if (matched.length >= 200) break; continue; }
       const gate = await checkPathPassword(parentPath, pws);
@@ -529,7 +570,7 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const matched = [];
   for (const entry of all) {
     // 过滤隐藏条目（管理员放行）
-    if (!admin && (await isHidden(entry.path))) continue;
+    if (!admin && (await isHidden(normalize(entry.path)))) continue;
     const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
     if (admin) { matched.push(entry); if (matched.length >= 200) break; continue; }
     const gate = await checkPathPassword(parentPath, pws);

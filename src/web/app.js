@@ -358,8 +358,9 @@ function renderContent() {
 }
 
 function itemActionsHtml(entry) {
-  if (!state.admin) return '';
-  return `<button class="btn sm row-menu" data-act="menu" data-path="${esc(entry.path)}" title="操作">${ICON.menu}</button>`;
+  // 操作列 ⋯ 按钮对所有访客可见（非 admin 仅提供复制链接/下载，admin 含重命名/移动/隐藏/删除），
+  // 避免无痕(非 admin)模式下操作列整列空白。
+  return `<button class="btn sm icon row-menu" data-act="menu" data-path="${esc(entry.path)}" title="操作">${ICON.menu}</button>`;
 }
 
 // 隐藏/加密徽标（管理员可见隐藏目录时显示）
@@ -399,7 +400,7 @@ function renderGrid() {
   const cards = state.entries.map((e) => {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
-    const menu = state.admin ? `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>` : '';
+    const menu = `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>`;
     return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       ${e.isDir ? '' : `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>`}
       <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
@@ -469,17 +470,29 @@ function isDriveRoot(path) {
 }
 function entryMenu(entry) {
   const driveRoot = isDriveRoot(entry.path);
-  const opButtons = driveRoot
-    ? `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>`
-    : `<button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
+  let opButtons;
+  if (!state.admin) {
+    // 非管理员：仅提供复制链接 / 下载（隐藏/重命名/移动/删除需管理员；文件夹无下载）
+    opButtons = `<button class="btn block" data-op="copy">${ICON.external}<span>复制链接</span></button>`;
+    if (!entry.isDir) opButtons += `<button class="btn block" data-op="dl">${ICON.download}<span>下载</span></button>`;
+  } else if (driveRoot) {
+    opButtons = `<button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>`;
+  } else {
+    opButtons = `<button class="btn block" data-op="rename">${ICON.rename}<span>重命名</span></button>
        <button class="btn block" data-op="move">${ICON.move}<span>移动</span></button>
        <button class="btn block" data-op="hide">${ICON.hide}<span>隐藏/加密</span></button>
        <button class="btn block danger" data-op="delete">${ICON.del}<span>删除</span></button>`;
+  }
   const m = document.createElement('div');
   m.className = 'modal';
   m.innerHTML = `<h3>${esc(entry.name)}</h3>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">${opButtons}</div>`;
   const bd = openModal(m);
+  if (!state.admin) {
+    m.querySelector('[data-op="copy"]').onclick = () => { closeModal(bd); copyRowLink(entry.path); };
+    m.querySelector('[data-op="dl"]').onclick = () => { closeModal(bd); downloadRow(entry.path); };
+    return;
+  }
   if (!driveRoot) {
     m.querySelector('[data-op="rename"]').onclick = () => { closeModal(bd); doRename(entry); };
     m.querySelector('[data-op="move"]').onclick = () => { closeModal(bd); doMove(entry); };
@@ -764,11 +777,13 @@ function updateBatchUI() {
   if (all) all.checked = files.length > 0 && files.every((e) => state.selected.has(e.path));
 }
 
-// 触发下载：走同域 /api/download（302→存储直链），用 <a> 点击而非 window.open，
-// 避免被浏览器弹出拦截器拦截导致「下不了」。错峰触发防止一次性开多个被拦。
+// 触发下载：走同域 /api/download?proxy=1（worker 服务端拉取直链并流式回传字节），
+// 前端 fetch→blob 触发下载。绝不跳转当前页、不弹多窗、不受跨域 CORS 限制。
+// 批量下载复用此函数错峰触发即可，不会破坏页面。
 function triggerDownload(path) {
   const a = document.createElement('a');
-  a.href = `/api/download?path=${enc(path)}`;
+  a.href = `/api/download?path=${enc(path)}&proxy=1`;
+  a.download = basename(path);
   a.rel = 'noopener';
   a.style.display = 'none';
   document.body.appendChild(a);
@@ -1330,6 +1345,26 @@ async function renderZip(url, pb, size) {
       } catch (e) { alertModal('失败', e.message, 'danger'); }
     };
   });
+  // ZIP 内图片条目：懒加载内联缩略图（仅可见区域，避免大包一次性拉满）
+  const thumbImgs = pb.querySelectorAll('img[data-zipthumb]');
+  if (thumbImgs.length) {
+    const loadThumb = async (img) => {
+      const en = entryMap.get(img.dataset.zipthumb);
+      if (!en) return;
+      try {
+        const data = await zip.getData(en);
+        img.src = URL.createObjectURL(new Blob([data]));
+      } catch { img.remove(); }
+    };
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver((es) => {
+        es.forEach((en) => { if (en.isIntersecting) { io.unobserve(en.target); loadThumb(en.target); } });
+      }, { rootMargin: '200px' });
+      thumbImgs.forEach((img) => io.observe(img));
+    } else {
+      thumbImgs.forEach((img) => loadThumb(img));
+    }
+  }
   bindPreviewBar(pb, url);
 }
 
@@ -1360,7 +1395,9 @@ function zipTreeHtml(node) {
       <ul class="zsub">${zipTreeHtml(dir)}</ul>`;
   }
   for (const f of node.files) {
-    html += `<li data-path="${esc(f.name)}"><span class="zname">${esc(f.base)}</span>
+    const isImg = isImageName(f.base);
+    const thumb = isImg ? `<img class="zip-thumb" data-zipthumb="${enc(f.name)}" alt="" loading="lazy"/>` : '';
+    html += `<li data-path="${esc(f.name)}">${thumb}<span class="zname">${esc(f.base)}</span>
       <span class="zsize">${fmtSize(f.compSize)}</span>
       <button class="btn sm" data-zip="pv" data-path="${esc(f.name)}">预览</button>
       <button class="btn sm" data-zip="dl" data-path="${esc(f.name)}">下载</button></li>`;

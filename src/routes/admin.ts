@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { getMounts, normalize } from '../config';
-import { loadXlsxConfig } from './fs';
+import { loadXlsxConfig, getConfigSaveTargets } from './fs';
 import { constantTimeCompare } from '../lib/acl';
 
 // 会话管理（内存存储，带过期时间）
@@ -170,18 +170,13 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
     return c.json({ error: '没有可用的挂载点' }, 500);
   }
   
-  const configAuth = c.env.CONFIG_AUTH;
   const configPath = c.env.CONFIG_PATH || '/';
   const xlsxPassword = c.env.CONF_PW;
   const content = await xlsxConfig.generateXlsx(xlsxPassword);
-  
-  // 回落逻辑：优先指定位置 -> first-onedrive -> first-s3 -> 第一个存储
-  const saveTargets: string[] = [];
-  
-  if (configAuth) {
-    saveTargets.push(configAuth);
-  }
-  saveTargets.push(':first-onedrive', ':first-s3', ':first');
+
+  // 收敛保存位置：优先写回「刚读到 .elist.xlsx 的账号」(多账号下保证读=写同一处)，
+  // 再回退 configAuth -> first-onedrive -> first-s3 -> 第一个存储
+  const saveTargets = getConfigSaveTargets(c);
   
   const errors: string[] = [];
   

@@ -208,17 +208,16 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   position: sticky; top: 0; background: var(--bg); z-index: 1; cursor: pointer; user-select: none;
 }
 .list thead th:hover { color: var(--text); }
-/* 固定列宽（7 列布局：☐/链接/下载/名称/操作/大小/修改时间）：
-   ☐ 30px、链接与下载各 36px（更紧凑、列间距更近）、名称自适应、操作 52px、大小 96px、时间 132px */
-.list th:nth-child(1), .list td:nth-child(1) { width: 30px; }
-.list th:nth-child(2), .list td:nth-child(2),
-.list th:nth-child(3), .list td:nth-child(3) { width: 36px; }
-.list th:nth-child(5), .list td:nth-child(5) { width: 52px; }
-.list th:nth-child(6), .list td:nth-child(6) { width: 96px; }
-.list th:nth-child(7), .list td:nth-child(7) { width: 132px; }
+/* 固定列宽（类选择器，兼容非 admin 隐藏操作列后列数变化：☐/链接/下载/名称/操作/大小/修改时间）：
+   ☐ 30px、链接与下载各 36px（更紧凑、列间距更近）、名称自适应、操作 52px(仅 admin)、大小 96px、时间 132px */
+.list th.ck, .list td.ck { width: 30px; }
+.list th.op, .list td.op { width: 36px; }
+.list th.acts, .list td.acts { width: 52px; }
+.list th.size, .list td.size { width: 96px; }
+.list th.mod, .list td.mod { width: 132px; }
 @media (max-width: 820px) {
-  .list th:nth-child(6), .list td:nth-child(6),
-  .list th:nth-child(7), .list td:nth-child(7) { width: auto; }
+  .list th.size, .list td.size,
+  .list th.mod, .list td.mod { width: auto; }
 }
 /* 链接/下载/操作列：无边框图标按钮（与列头风格一致） */
 .list .op { text-align: center; white-space: nowrap; }
@@ -228,7 +227,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 }
 .list .op .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op { cursor: pointer; }
-.list th.op svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
+.list th.op svg, .list th.acts svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }

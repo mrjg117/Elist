@@ -358,8 +358,8 @@ function renderContent() {
 }
 
 function itemActionsHtml(entry) {
-  // 操作列 ⋯ 按钮对所有访客可见（非 admin 仅提供复制链接/下载，admin 含重命名/移动/隐藏/删除），
-  // 避免无痕(非 admin)模式下操作列整列空白。
+  // 操作列仅管理员可见；非 admin 时 renderList 根本不渲染该列（含列头），故这里也守卫返回空。
+  if (!state.admin) return '';
   return `<button class="btn sm icon row-menu" data-act="menu" data-path="${esc(entry.path)}" title="操作">${ICON.menu}</button>`;
 }
 
@@ -370,6 +370,8 @@ function badgesHtml(e) {
 }
 
 function renderList() {
+  // 非 admin（未登录）：操作列整列不渲染（连列头都不显示）。admin 才渲染该列。
+  const showActs = state.admin;
   const rows = state.entries.map((e) => {
     const ic = entryIcon(e);
     const isFile = !e.isDir;
@@ -378,19 +380,21 @@ function renderList() {
       <td class="op">${isFile ? `<button class="btn sm icon" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>` : ''}</td>
       <td class="op">${isFile ? `<button class="btn sm icon" data-act="dlrow" data-path="${esc(e.path)}" title="下载">${ICON.download}</button>` : ''}</td>
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
-      <td class="acts">${itemActionsHtml(e)}</td>
+      ${showActs ? `<td class="acts">${itemActionsHtml(e)}</td>` : ''}
       <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
       <td class="mod">${esc(fmtDate(e.modified))}</td>
     </tr>`;
   }).join('');
   const files = state.entries.filter((e) => !e.isDir);
   const allChecked = files.length > 0 && files.every((e) => state.selected.has(e.path));
+  const actsTh = showActs ? `<th class="acts" title="操作">${ICON.menu}</th>` : '';
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
       <th class="op" data-batchlink title="复制选中文件链接">${ICON.external}</th><th class="op" data-batchdl title="下载选中文件">${ICON.download}</th>
-      <th data-sort="name">名称</th><th class="op" title="操作">${ICON.menu}</th>
-      <th data-sort="size">大小</th><th data-sort="time">修改时间</th>
+      <th class="name" data-sort="name">名称</th>
+      ${actsTh}
+      <th class="size" data-sort="size">大小</th><th class="mod" data-sort="time">修改时间</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;

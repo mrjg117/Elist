@@ -386,8 +386,8 @@ function renderList() {
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th class="op" title="复制链接">链接</th><th class="op" title="下载">下载</th>
-      <th data-sort="name">名称</th><th class="op">操作</th>
+      <th class="op" title="复制链接">${ICON.external}</th><th class="op" title="下载">${ICON.download}</th>
+      <th data-sort="name">名称</th><th class="op" title="操作">${ICON.menu}</th>
       <th data-sort="size">大小</th><th data-sort="time">修改时间</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -725,15 +725,23 @@ async function doDelete(entry) {
 }
 
 // ---------------- 批量选择 ----------------
+// 直链缓存（session 内复用，避免每次点击实时生成；直链本身有 TTL，可接受）
+const linkCache = new Map();
+async function getLink(path) {
+  if (linkCache.has(path)) return linkCache.get(path);
+  const { url } = await apiGet(`/api/link?path=${enc(path)}`);
+  linkCache.set(path, url);
+  return url;
+}
 async function copyRowLink(path) {
   try {
-    const { url } = await apiGet(`/api/link?path=${enc(path)}`);
+    const url = await getLink(path);
     await copyShareLink(url);
   } catch (e) { alertModal('复制失败', e.message, 'danger'); }
 }
 async function downloadRow(path) {
   try {
-    const { url } = await apiGet(`/api/link?path=${enc(path)}`);
+    const url = await getLink(path);
     window.open(url, '_blank');
   } catch (e) { alertModal('下载失败', e.message, 'danger'); }
 }
@@ -754,8 +762,7 @@ async function copySelectedLinks() {
   const urls = [];
   for (const p of paths) {
     try {
-      const { url } = await apiGet(`/api/link?path=${enc(p)}`);
-      urls.push(url);
+      urls.push(await getLink(p));
     } catch { /* 单个失败跳过 */ }
   }
   if (!urls.length) { alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
@@ -776,8 +783,7 @@ async function downloadSelected() {
   let ok = 0;
   for (const p of paths) {
     try {
-      const { url } = await apiGet(`/api/link?path=${enc(p)}`);
-      window.open(url, '_blank');
+      window.open(await getLink(p), '_blank');
       ok++;
     } catch { /* 跳过 */ }
   }
@@ -1225,6 +1231,7 @@ async function openZipPreview(url, size) {
     supportsRange = r.status === 206;
   } catch { supportsRange = false; }
   if (supportsRange) {
+    await loadScript('/vendor/fflate.umd.js'); // deflate 条目 inflate 必需（此前漏加载导致单文件预览失败）
     const entries = await listZipByRange(url);
     return { entries, getData: (e) => fetchZipEntryByRange(url, e) };
   }

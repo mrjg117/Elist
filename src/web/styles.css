@@ -209,12 +209,13 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 }
 .list thead th:hover { color: var(--text); }
 /* 固定列宽（7 列布局：☐/链接/下载/名称/操作/大小/修改时间）：
-   ☐ 26px、链接与下载各 46px、名称自适应、操作 52px、大小 110px、时间 150px */
+   ☐ 34px、链接与下载各 44px、名称自适应、操作 56px、大小 100px、时间 140px */
+.list th:nth-child(1), .list td:nth-child(1) { width: 34px; }
 .list th:nth-child(2), .list td:nth-child(2),
-.list th:nth-child(3), .list td:nth-child(3) { width: 46px; }
-.list th:nth-child(5), .list td:nth-child(5) { width: 52px; }
-.list th:nth-child(6), .list td:nth-child(6) { width: 110px; }
-.list th:nth-child(7), .list td:nth-child(7) { width: 150px; }
+.list th:nth-child(3), .list td:nth-child(3) { width: 44px; }
+.list th:nth-child(5), .list td:nth-child(5) { width: 56px; }
+.list th:nth-child(6), .list td:nth-child(6) { width: 100px; }
+.list th:nth-child(7), .list td:nth-child(7) { width: 140px; }
 @media (max-width: 820px) {
   .list th:nth-child(6), .list td:nth-child(6),
   .list th:nth-child(7), .list td:nth-child(7) { width: auto; }
@@ -227,7 +228,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 }
 .list .op .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op { cursor: pointer; }
-.list th.op svg { width: 15px; height: 15px; display: inline-block; vertical-align: middle; }
+.list th.op svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }
@@ -414,9 +415,9 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .zip-file-list li.zdir .zname { color: var(--text-dim); font-weight: 600; }
 .zip-file-list .zip-empty { color: var(--text-faint); padding: 12px 0; }
 /* ZIP 树形折叠 */
-.zip-file-list .zsub { display: none; padding-left: 14px; }
+.zip-file-list .zsub { display: none; padding-left: 20px; }
 .zip-file-list li.zdir { cursor: pointer; user-select: none; }
-.zip-file-list .ztwist { width: 16px; flex: 0 0 auto; text-align: center; color: var(--text-faint); font-size: 11px; }
+.zip-file-list .ztwist { width: 16px; flex: 0 0 auto; text-align: center; color: var(--text-faint); font-size: 16px; }
 
 /* JSON / 原始文本 / 代码 */
 .json-viewer pre, .raw-pre {
@@ -514,7 +515,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 /* ================= 批量选择 ================= */
 .batch-bar { display: inline-flex; align-items: center; gap: 5px; }
 .batch-bar .btn { padding: 4px 9px; font-size: 12px; }
-.list .ck { width: 26px; padding: 0 4px; text-align: center; }
+.list .ck { width: 34px; padding: 0 4px; text-align: center; }
 .list .ckbox, .card-ck .ckbox, .list .ckall { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 .card-ck { position: absolute; top: 6px; left: 6px; z-index: 3; padding: 3px; background: var(--bg-elev); border-radius: 6px; opacity: 0.75; transition: opacity 0.12s; }
 .card:hover .card-ck { opacity: 1; }

@@ -81,7 +81,10 @@ export async function isHidden(
   _fresh = false
 ): Promise<boolean> {
   if (!xlsxConfig.isLoaded()) {
-    return false; // 未加载时默认不隐藏
+    // 失败安全：配置未加载（冷启动 / isolate 内存未统一 / 读取失败）时默认「隐藏」，
+    // 绝不因内存不一致而泄露隐藏项。与 X-Admin-Password 无状态鉴权同一思路：
+    // 安全判定不依赖易失内存，宁可拒绝服务也不泄露。
+    return true;
   }
   return xlsxConfig.isHidden(entryPath);
 }
@@ -94,7 +97,7 @@ export async function filterHidden<T extends { name: string; path: string }>(
   _fresh = false
 ): Promise<T[]> {
   if (!xlsxConfig.isLoaded()) {
-    return entries; // 未加载时不过滤
+    return []; // 失败安全：未加载时全部隐藏，绝不泄露隐藏项
   }
   return entries.filter((e) => !xlsxConfig.isHidden(e.path));
 }

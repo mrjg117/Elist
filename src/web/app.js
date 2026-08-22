@@ -36,7 +36,7 @@ const ICON = {
 const state = {
   title: 'Elist',
   path: '/',
-  view: localStorage.getItem('elist.view') || 'grid',
+  view: localStorage.getItem('elist.view') || 'list',
   sort: localStorage.getItem('elist.sort') || 'name_asc',
   entries: [],
   passwords: [],
@@ -387,7 +387,7 @@ function renderList() {
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th class="op" data-batchlink title="复制当前目录全部文件链接">${ICON.external}</th><th class="op" data-batchdl title="下载当前目录全部文件">${ICON.download}</th>
+      <th class="op" data-batchlink title="复制选中文件链接">${ICON.external}</th><th class="op" data-batchdl title="下载选中文件">${ICON.download}</th>
       <th data-sort="name">名称</th><th class="op" title="操作">${ICON.menu}</th>
       <th data-sort="size">大小</th><th data-sort="time">修改时间</th>
     </tr></thead>
@@ -432,13 +432,14 @@ function bindItems(c) {
   };
   // 链接/下载列头：批量复制/下载当前目录全部文件
   const thLink = c.querySelector('[data-batchlink]');
-  if (thLink) thLink.onclick = (ev) => { ev.stopPropagation(); copyAllLinks(); };
+  if (thLink) thLink.onclick = (ev) => { ev.stopPropagation(); copySelectedLinks(); };
   const thDl = c.querySelector('[data-batchdl]');
-  if (thDl) thDl.onclick = (ev) => { ev.stopPropagation(); downloadAllFiles(); };
+  if (thDl) thDl.onclick = (ev) => { ev.stopPropagation(); downloadSelected(); };
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
+      // 勾选列(.ck)与链接/下载列(.op)整列不触发预览或导航，留出点击误差空间
       if (ev.target.closest('[data-act]')) return;
-      if (ev.target.closest('.ckbox')) return;
+      if (ev.target.closest('.ck, .op')) return;
       const entry = state.entries.find((x) => x.path === el.dataset.path);
       if (!entry) return;
       if (entry.isDir) browse(entry.path);
@@ -747,10 +748,8 @@ async function copyRowLink(path) {
   } catch (e) { alertModal('复制失败', e.message, 'danger'); }
 }
 async function downloadRow(path) {
-  try {
-    const url = await getLink(path);
-    window.open(url, '_blank');
-  } catch (e) { alertModal('下载失败', e.message, 'danger'); }
+  try { triggerDownload(path); }
+  catch (e) { alertModal('下载失败', e.message, 'danger'); }
 }
 function updateBatchUI() {
   // 网格底部浮动条
@@ -765,32 +764,16 @@ function updateBatchUI() {
   if (all) all.checked = files.length > 0 && files.every((e) => state.selected.has(e.path));
 }
 
-// 复制/下载当前目录全部文件（链接/下载列头点击）
-async function copyAllLinks() {
-  const files = state.entries.filter((e) => !e.isDir);
-  if (!files.length) { alertModal('提示', '当前目录没有文件', 'warn'); return; }
-  const urls = [];
-  for (const f of files) { try { urls.push(await getLink(f.path)); } catch { /* 跳过 */ } }
-  if (!urls.length) { alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
-  const text = urls.join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
-    alertModal('已复制', `已复制 ${urls.length} 个链接到剪贴板`, 'ok');
-  } catch {
-    const i = document.createElement('textarea');
-    i.value = text; document.body.appendChild(i); i.select();
-    document.execCommand('copy'); i.remove();
-    alertModal('已复制', `已复制 ${urls.length} 个链接`, 'ok');
-  }
-}
-async function downloadAllFiles() {
-  const files = state.entries.filter((e) => !e.isDir);
-  if (!files.length) { alertModal('提示', '当前目录没有文件', 'warn'); return; }
-  let ok = 0;
-  for (const f of files) {
-    try { window.open(await getLink(f.path), '_blank'); ok++; } catch { /* 跳过 */ }
-  }
-  alertModal('已触发', `已为 ${ok}/${files.length} 个文件打开下载（若被浏览器拦截请用复制链接）`, 'ok');
+// 触发下载：走同域 /api/download（302→存储直链），用 <a> 点击而非 window.open，
+// 避免被浏览器弹出拦截器拦截导致「下不了」。错峰触发防止一次性开多个被拦。
+function triggerDownload(path) {
+  const a = document.createElement('a');
+  a.href = `/api/download?path=${enc(path)}`;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 async function copySelectedLinks() {
   const paths = [...state.selected];
@@ -818,12 +801,10 @@ async function downloadSelected() {
   if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
   let ok = 0;
   for (const p of paths) {
-    try {
-      window.open(await getLink(p), '_blank');
-      ok++;
-    } catch { /* 跳过 */ }
+    try { triggerDownload(p); ok++; } catch { /* 跳过 */ }
+    await new Promise((r) => setTimeout(r, 350)); // 错峰，避免浏览器合并/拦截
   }
-  alertModal('已触发', `已为 ${ok}/${paths.length} 个文件打开下载（若被浏览器拦截请用复制链接）`, 'ok');
+  alertModal('已触发下载', `已触发 ${ok}/${paths.length} 个文件下载`, ok ? 'ok' : 'danger');
 }
 
 // ---------------- 预览 ----------------

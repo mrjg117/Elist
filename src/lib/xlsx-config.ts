@@ -20,6 +20,23 @@
 import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
 import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
 
+/**
+ * 本地路径归一化（不依赖 config.ts，避免循环引用）。
+ * 统一前导斜杠、去掉多余的 / 与 .、解析 ..，使隐藏/密码查询对「/admin」「admin」「/admin/」等写法都一致。
+ */
+function normPath(p: string): string {
+  if (!p || !p.startsWith('/')) p = '/' + (p || '');
+  const parts = p.split('/');
+  const out: string[] = [];
+  for (const seg of parts) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  const r = '/' + out.join('/');
+  return r === '/' ? '/' : r;
+}
+
 /** 内存中的配置数据 */
 interface ConfigData {
   passwords: Map<string, { password: string; hint?: string }>;
@@ -86,7 +103,7 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
       const pwd = row[1];
       if (!path || !pwd) continue;
       const hint = row[2];
-      data.passwords.set(path, { password: pwd, hint: hint || undefined });
+      data.passwords.set(normPath(path), { password: pwd, hint: hint || undefined });
     }
   }
 
@@ -99,7 +116,7 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
       if (!row || row.length < 1) continue;
       const path = row[0];
       if (!path) continue;
-      data.hidden.add(path);
+      data.hidden.add(normPath(path));
     }
   }
 
@@ -151,7 +168,7 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
       const path = row[0];
       const pwd = row[1];
       if (!path || !pwd) continue;
-      data.passwords.set(path, { password: pwd, hint: row[2] || undefined });
+      data.passwords.set(normPath(path), { password: pwd, hint: row[2] || undefined });
     }
   }
 
@@ -162,7 +179,7 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
       if (!row || row.length < 1) continue;
       const path = row[0];
       if (!path) continue;
-      data.hidden.add(path);
+      data.hidden.add(normPath(path));
     }
   }
 
@@ -245,15 +262,16 @@ export function clearDirty(): void {
 
 /** 获取路径密码 */
 export function getPassword(path: string): { password: string; hint?: string } | null {
-  return data.passwords.get(path) || null;
+  return data.passwords.get(normPath(path)) || null;
 }
 
 /** 设置路径密码 */
 export function setPassword(path: string, password: string, hint?: string): void {
+  const np = normPath(path);
   if (password) {
-    data.passwords.set(path, { password, hint });
+    data.passwords.set(np, { password, hint });
   } else {
-    data.passwords.delete(path);
+    data.passwords.delete(np);
   }
   data.dirty = true;
 }
@@ -277,15 +295,16 @@ export function getAllPasswords(): Array<{ path: string; password: string; hint?
 
 /** 检查路径是否隐藏 */
 export function isHidden(path: string): boolean {
-  return data.hidden.has(path);
+  return data.hidden.has(normPath(path));
 }
 
 /** 设置路径隐藏状态 */
 export function setHidden(path: string, hidden: boolean): void {
+  const np = normPath(path);
   if (hidden) {
-    data.hidden.add(path);
+    data.hidden.add(np);
   } else {
-    data.hidden.delete(path);
+    data.hidden.delete(np);
   }
   data.dirty = true;
 }

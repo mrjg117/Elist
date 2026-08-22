@@ -124,6 +124,62 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
   data.dirty = false;
 }
 
+/**
+ * 合并解析（不清空已有配置，仅 add）。用于多账号 .elist.xlsx 配置并集读取，
+ * 彻底消除「读 A 写 B / 配置散落多账号」导致隐藏项读不到（隐藏盘仍显示）。
+ * 与 parseXlsx 不同：不 ensureDefaultConfig、不重置 loaded/dirty，只把内容并入现有 Map/Set。
+ */
+export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
+  let xlsxBuffer = buffer;
+
+  if (password) {
+    try {
+      const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
+      xlsxBuffer = decrypted.buffer as ArrayBuffer;
+    } catch {
+      xlsxBuffer = buffer;
+    }
+  }
+
+  const sheets = await parseXlsxMinimal(xlsxBuffer);
+
+  const pwSheet = sheets.get('passwords');
+  if (pwSheet) {
+    for (let i = 1; i < pwSheet.length; i++) {
+      const row = pwSheet[i];
+      if (!row || row.length < 2) continue;
+      const path = row[0];
+      const pwd = row[1];
+      if (!path || !pwd) continue;
+      data.passwords.set(path, { password: pwd, hint: row[2] || undefined });
+    }
+  }
+
+  const hiddenSheet = sheets.get('hidden');
+  if (hiddenSheet) {
+    for (let i = 1; i < hiddenSheet.length; i++) {
+      const row = hiddenSheet[i];
+      if (!row || row.length < 1) continue;
+      const path = row[0];
+      if (!path) continue;
+      data.hidden.add(path);
+    }
+  }
+
+  const configSheet = sheets.get('config');
+  if (configSheet) {
+    for (let i = 1; i < configSheet.length; i++) {
+      const row = configSheet[i];
+      if (!row || row.length < 1) continue;
+      const key = row[0];
+      if (!key) continue;
+      data.config.set(key, row[1] || '');
+    }
+  }
+
+  data.dirty = true;
+}
+
 /** 将内存配置生成 xlsx 二进制（支持加密） */
 export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
   // 生成前确保刚需全局配置项（如 admin_password）已存在，自动建表时也会带上空值键

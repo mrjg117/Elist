@@ -325,8 +325,11 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   // 门禁：自身 + 所有祖先目录的密码配置都满足才放行（级联；子层需各自密码=重新鉴权）
-  const gate = await checkPathPassword(path, pws, readText, fresh);
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  // 管理员免密：登录后访问隐藏/加密目录无需密码
+  if (!admin) {
+    const gate = await checkPathPassword(path, pws, readText, fresh);
+    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  }
 
   const cacheKey = mount.mount + rest;
   let entries = fresh ? null : getListing(cacheKey);
@@ -347,6 +350,10 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     }
   } else {
     visible = await filterHidden(path, entries, readText, fresh);
+    // 未登录用户：隐藏的已过滤；剩余条目带 locked（加密）标记，前端显示 🔒（不泄露 hidden）
+    const out = [];
+    for (const e of visible) out.push({ ...e, locked: !!(await xlsxConfig.getPassword(e.path)) });
+    visible = out;
   }
   visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
   const spec = c.req.query('sort') || 'name_asc';
@@ -372,9 +379,12 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 同时校验文件路径本身和父目录路径（支持文件级密码）
-  const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  // 同时校验文件路径本身和父目录路径（支持文件级密码）；管理员免密
+  const admin = await isAdminRequest(c);
+  if (!admin) {
+    const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
+    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  }
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
@@ -398,9 +408,12 @@ export async function handleDownload(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 同时校验文件路径本身和父目录路径（支持文件级密码）
-  const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
-  if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  // 同时校验文件路径本身和父目录路径（支持文件级密码）；管理员免密
+  const admin = await isAdminRequest(c);
+  if (!admin) {
+    const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
+    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  }
 
   const url = await driver.link(rest);
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
@@ -480,6 +493,7 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
  */
 export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const q = (c.req.query('q') || '').toLowerCase();
+  const admin = await isAdminRequest(c); // 管理员：搜索可见隐藏项且免密
   const path = normalize(c.req.query('path') || '/');
   if (!q) return c.json([], 200);
 
@@ -495,9 +509,10 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
     // 过滤：只返回用户有权限访问且未隐藏的目录
     const matched = [];
     for (const entry of all) {
-      // 过滤隐藏条目
-      if (await isHidden(entry.path)) continue;
+      // 过滤隐藏条目（管理员放行）
+      if (!admin && (await isHidden(entry.path))) continue;
       const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+      if (admin) { matched.push(entry); if (matched.length >= 200) break; continue; }
       const gate = await checkPathPassword(parentPath, pws);
       if (gate.ok) {
         matched.push(entry);
@@ -513,9 +528,10 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
   const all = searchListings(q).filter((e) => e.path.startsWith(mount.mount));
   const matched = [];
   for (const entry of all) {
-    // 过滤隐藏条目
-    if (await isHidden(entry.path)) continue;
+    // 过滤隐藏条目（管理员放行）
+    if (!admin && (await isHidden(entry.path))) continue;
     const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+    if (admin) { matched.push(entry); if (matched.length >= 200) break; continue; }
     const gate = await checkPathPassword(parentPath, pws);
     if (gate.ok) {
       matched.push(entry);

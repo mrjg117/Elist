@@ -371,26 +371,24 @@ function badgesHtml(e) {
 function renderList() {
   const rows = state.entries.map((e) => {
     const ic = entryIcon(e);
+    const isFile = !e.isDir;
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       <td class="ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></td>
+      <td class="op">${isFile ? `<button class="btn sm icon" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>` : ''}</td>
+      <td class="op">${isFile ? `<button class="btn sm icon" data-act="dlrow" data-path="${esc(e.path)}" title="下载">${ICON.download}</button>` : ''}</td>
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
+      <td class="acts">${itemActionsHtml(e)}</td>
       <td class="size">${e.isDir ? '' : esc(fmtSize(e.size))}</td>
       <td class="mod">${esc(fmtDate(e.modified))}</td>
-      <td class="acts">${itemActionsHtml(e)}</td>
     </tr>`;
   }).join('');
   const allChecked = state.entries.length > 0 && state.entries.every((e) => state.selected.has(e.path));
-  const headBatch = state.selected.size ? ` <span class="head-batch">
-      <button class="btn sm" data-batch="inv">反选</button>
-      <button class="btn sm" data-batch="link">复制链接</button>
-      <button class="btn sm primary" data-batch="dl">下载(${state.selected.size})</button>
-      <button class="btn sm ghost" data-batch="clear">✕</button>
-    </span>` : '';
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
-      <th data-sort="name">名称${headBatch}</th><th data-sort="size">大小</th>
-      <th data-sort="time">修改时间</th><th></th>
+      <th class="op" title="复制链接">链接</th><th class="op" title="下载">下载</th>
+      <th data-sort="name">名称</th><th class="op">操作</th>
+      <th data-sort="size">大小</th><th data-sort="time">修改时间</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -430,19 +428,6 @@ function bindItems(c) {
     else state.entries.forEach((e) => state.selected.delete(e.path));
     updateBatchUI();
   };
-  // 表头批量按钮（名称列右侧：反选/复制链接/下载/清空）
-  c.querySelectorAll('[data-batch]').forEach((btn) => {
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      const op = btn.dataset.batch;
-      if (op === 'inv') {
-        state.entries.forEach((e) => { state.selected.has(e.path) ? state.selected.delete(e.path) : state.selected.add(e.path); });
-        updateBatchUI();
-      } else if (op === 'link') copySelectedLinks();
-      else if (op === 'dl') downloadSelected();
-      else if (op === 'clear') { state.selected.clear(); updateBatchUI(); }
-    };
-  });
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       if (ev.target.closest('[data-act]')) return;
@@ -464,6 +449,8 @@ function bindItems(c) {
       else if (act === 'hide') setFolderPassword(path);
       else if (act === 'delete') doDelete(entry);
       else if (act === 'menu') entryMenu(entry);
+      else if (act === 'copyrow') copyRowLink(path);
+      else if (act === 'dlrow') downloadRow(path);
     };
   });
 }
@@ -738,19 +725,24 @@ async function doDelete(entry) {
 }
 
 // ---------------- 批量选择 ----------------
+async function copyRowLink(path) {
+  try {
+    const { url } = await apiGet(`/api/link?path=${enc(path)}`);
+    await copyShareLink(url);
+  } catch (e) { alertModal('复制失败', e.message, 'danger'); }
+}
+async function downloadRow(path) {
+  try {
+    const { url } = await apiGet(`/api/link?path=${enc(path)}`);
+    window.open(url, '_blank');
+  } catch (e) { alertModal('下载失败', e.message, 'danger'); }
+}
 function updateBatchUI() {
   // 网格底部浮动条
   const fb = document.getElementById('floatbatch');
   const cnt = document.getElementById('fb-count');
   if (cnt) cnt.textContent = `已选 ${state.selected.size}`;
   if (fb) fb.style.display = state.selected.size ? 'flex' : 'none';
-  // 列表表头批量按钮（名称右侧）：需要显示/隐藏时整表重渲染
-  const hb = document.querySelector('.list .head-batch');
-  if ((state.selected.size > 0) !== !!hb) { render(); return; }
-  if (hb) {
-    const dl = hb.querySelector('[data-batch="dl"]');
-    if (dl) dl.textContent = `下载(${state.selected.size})`;
-  }
   // 行复选框与全选状态同步
   document.querySelectorAll('.content .ckbox').forEach((cb) => { cb.checked = state.selected.has(cb.dataset.path); });
   const all = document.querySelector('.list .ckall');
@@ -1283,20 +1275,24 @@ async function renderZip(url, pb, size) {
     return;
   }
   const entries = zip.entries;
+  const tree = zipTree(entries);
   let html = `<div class="zip-file-list"><strong>压缩包内容（${entries.length} 项）</strong><ul>`;
   if (!entries.length) html += '<li class="zip-empty">（空压缩包）</li>';
-  for (const en of entries) {
-    const isDir = en.name.endsWith('/');
-    html += `<li class="${isDir ? 'zdir' : ''}"><span class="zname">${esc(en.name)}</span>`;
-    if (!isDir) {
-      html += `<span class="zsize">${fmtSize(en.compSize)}</span>
-        <button class="btn sm" data-zip="pv" data-path="${esc(en.name)}">预览</button>
-        <button class="btn sm" data-zip="dl" data-path="${esc(en.name)}">下载</button>`;
-    }
-    html += '</li>';
-  }
+  else html += zipTreeHtml(tree);
   html += '</ul></div>';
   pb.innerHTML = html + previewBar();
+  // 目录行折叠
+  pb.querySelectorAll('li.zdir').forEach((li) => {
+    li.onclick = (ev) => {
+      if (ev.target.closest('button')) return;
+      const sub = li.nextElementSibling;
+      const twist = li.querySelector('.ztwist');
+      if (!sub) return;
+      const open = sub.style.display !== 'none';
+      sub.style.display = open ? 'none' : 'block';
+      if (twist) twist.textContent = open ? '▸' : '▾';
+    };
+  });
   const entryMap = new Map(entries.map((en) => [en.name, en]));
   pb.querySelectorAll('[data-zip]').forEach((btn) => {
     btn.onclick = async () => {
@@ -1311,6 +1307,41 @@ async function renderZip(url, pb, size) {
     };
   });
   bindPreviewBar(pb, url);
+}
+
+// 压缩包条目按路径构建树（目录可折叠，避免大量文件平铺）
+function zipTree(entries) {
+  const root = { dirs: new Map(), files: [] };
+  for (const en of entries) {
+    const parts = en.name.split('/').filter(Boolean);
+    if (!parts.length) continue;
+    let node = root;
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i];
+      const isLast = i === parts.length - 1;
+      if (isLast && !en.name.endsWith('/')) {
+        node.files.push({ ...en, base: seg });
+      } else {
+        if (!node.dirs.has(seg)) node.dirs.set(seg, { dirs: new Map(), files: [] });
+        node = node.dirs.get(seg);
+      }
+    }
+  }
+  return root;
+}
+function zipTreeHtml(node) {
+  let html = '';
+  for (const [name, dir] of node.dirs) {
+    html += `<li class="zdir"><span class="ztwist">▸</span><span class="zname">${esc(name)}/</span></li>
+      <ul class="zsub">${zipTreeHtml(dir)}</ul>`;
+  }
+  for (const f of node.files) {
+    html += `<li data-path="${esc(f.name)}"><span class="zname">${esc(f.base)}</span>
+      <span class="zsize">${fmtSize(f.compSize)}</span>
+      <button class="btn sm" data-zip="pv" data-path="${esc(f.name)}">预览</button>
+      <button class="btn sm" data-zip="dl" data-path="${esc(f.name)}">下载</button></li>`;
+  }
+  return html;
 }
 
 // ---- Office（微软在线预览）----

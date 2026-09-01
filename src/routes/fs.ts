@@ -24,6 +24,26 @@ function basenameOf(path: string): string {
   return path.slice(i + 1) || 'download';
 }
 
+/** 浏览器可在内联渲染（inline）的文件类型；其余走 attachment 触发下载。 */
+const PREVIEWABLE = new Set([
+  // 图片
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif',
+  // 音视频
+  'mp4', 'webm', 'mkv', 'mov', 'm4v', 'ogv', 'avi',
+  'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus',
+  // PDF
+  'pdf',
+  // 文本 / 代码 / 标记
+  'txt', 'log', 'ini', 'conf', 'toml', 'properties', 'env',
+  'md', 'markdown', 'json', 'csv', 'tsv', 'yaml', 'yml', 'xml',
+  'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp',
+  'css', 'scss', 'html', 'htm', 'sh', 'bash', 'zsh', 'sql', 'go', 'rs', 'rb', 'php',
+]);
+/** 该路径是否可在浏览器内联预览（决定 Content-Disposition 默认取值）。 */
+function isPreviewable(path: string): boolean {
+  return PREVIEWABLE.has(extOf(path));
+}
+
 /** 完整展示路径 -> 盘内相对路径(rest)，交给驱动 readText。 */
 function toRest(fullPath: string, mount: Mount): string {
   if (mount.mount === '/') return fullPath;
@@ -395,8 +415,11 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
  * 经 Elist 的统一代理端点（同源、流式、支持 Range）：复制链接与下载按钮
  * 共用这一口（下载加 ?download=1），浏览器预览/复制分享也都走这里。
  * 绝不跳转、不暴露存储签名直链、不受上游 CORS 限制。
- * ?download=1 以 attachment 触发下载；否则 inline（预览/嵌入）。文件名经
- * Content-Disposition 的 filename*=UTF-8'' 正确传递，故短链接也能正确命名下载文件。
+ * 处置策略（Content-Disposition）：
+ *  - ?download=1：强制 attachment（显式下载，如下载按钮）。
+ *  - 否则自适应：可内联渲染的类型（图片/音视频/PDF/文本/代码等）用 inline 在浏览器打开；
+ *    其余类型（压缩包/Office/字体/二进制等）自动 attachment 触发下载。
+ * 文件名经 Content-Disposition 的 filename*=UTF-8'' 正确传递，故短链接也能正确命名。
  */
 export async function handleRaw(c: Context<{ Bindings: Env }>) {
   const path = c.req.query('path');
@@ -457,7 +480,10 @@ export async function handleRaw(c: Context<{ Bindings: Env }>) {
   const nameParam = c.req.param('name');
   const fname = nameParam ? decodeURIComponent(nameParam) : basenameOf(normalizedPath);
   const encName = encodeURIComponent(fname);
-  const disp = c.req.query('download') === '1' ? 'attachment' : 'inline';
+  // 自适应处置：显式 ?download=1 强制下载；否则可预览类型 inline、其余 attachment。
+  const disp = c.req.query('download') === '1'
+    ? 'attachment'
+    : (isPreviewable(normalizedPath) ? 'inline' : 'attachment');
   out.set('Content-Disposition', `${disp}; filename="${encName}"; filename*=UTF-8''${encName}`);
 
   // 流式回传（不落内存）：直接桥接上游 body

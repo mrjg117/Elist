@@ -826,8 +826,10 @@ function rawUrl(path, download = false, name = '') {
   const seg = name ? `/${encodeURIComponent(name)}` : '';
   return `${location.origin}/api/raw${seg}${q}${download ? '&download=1' : ''}`;
 }
-// 复制链接 = 复制下载链接（带 download=1，访问即下载）。纯前端拼出，无后端请求。
-function getLink(path, name = '') { return rawUrl(path, true, name); }
+// 复制链接 = 自适应链接（以文件名结尾，纯前端拼出，无后端请求）。
+// 服务端按类型决定处置：图片/PDF/音视频/文本等内联预览，其余自动下载。
+// 仍需强制下载时请用 triggerDownload（带 ?download=1）。
+function getLink(path, name = '') { return rawUrl(path, false, name); }
 
 // 打开预览前做一次极小权限探测（Range 0-0，只取状态、丢 body），
 // 保留受密码保护目录的「需要密码」提示；复用 /api/raw 的同款门禁。

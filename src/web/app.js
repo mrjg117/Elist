@@ -224,6 +224,11 @@ async function browse(path, { fresh = false, search = null } = {}) {
   state.loading = true;
   state.error = null;
   state.lockedAt = null;
+  // 同步地址栏：让目录分享链接 / 刷新后保持当前目录（文件夹复制链接即 /?path=<enc>）
+  try {
+    const u = path && path !== '/' ? '/?path=' + encodeURIComponent(path) : '/';
+    history.replaceState(null, '', u);
+  } catch (_) {}
   render();
   try {
     // 根目录搜索需跨盘扫描，仍走后端 /api/search；子目录内搜索改为纯前端过滤（零 worker 往返）。
@@ -356,12 +361,13 @@ function render() {
             <button data-view="list" class="${state.view === 'list' ? 'active' : ''}">${ICON.list}<span>列表</span></button>
             <button data-view="grid" class="${state.view === 'grid' ? 'active' : ''}">${ICON.grid}<span>网格</span></button>
           </div>
+          ${state.view === 'grid' ? `<button class="btn sm" id="grid-selall">全选</button><button class="btn sm ghost" id="grid-selclear">清空</button>` : ''}
           <button class="btn" id="refresh" title="刷新">刷新</button>
         </div>
         <div class="content" id="content"></div>
       </main>
     </div>
-    ${state.view === 'grid' && state.selected.size ? `<div class="float-batch" id="floatbatch">
+    ${state.view === 'grid' ? `<div class="float-batch" id="floatbatch">
       <span class="fb-count" id="fb-count">已选 ${state.selected.size}</span>
       <button class="btn sm" id="selall">全选</button>
       <button class="btn sm" id="selinv">反选</button>
@@ -373,6 +379,7 @@ function render() {
   renderCrumbs();
   renderContent();
   bindToolbar();
+  updateBatchUI();
 }
 
 function renderDrives() {
@@ -467,19 +474,19 @@ function renderList() {
 }
 
 function renderGrid() {
-  // 非均匀图片墙：可预览图片 -> 大图瓦片(自适应高度)；其余 -> 小图标瓦片。
+  // 均匀网格：每张卡片等宽，图片封面(object-fit:cover)、其余居中类型图标，行列整齐不混乱。
+  // 图片墙逻辑仅体现在排序(wallSort 把可预览图片排最上)，不靠瓦片尺寸差制造混乱。
   const cards = state.entries.map((e) => {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
-    const tileCls = isImg ? 'tile-lg' : 'tile-sm';
     const ck = e.isDir ? '' : `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>`;
     const copyBtn = e.isDir
       ? `<button class="btn sm icon card-copy" data-act="copydir" data-path="${esc(e.path)}" title="复制文件夹链接">${ICON.external}</button>`
-      : '';
+      : `<button class="btn sm icon card-copy" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>`;
     const thumb = isImg
-      ? `<div class="thumb"><img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/></div>`
-      : `<div class="thumb"><span class="glyph ${ic.cls}">${ic.svg}</span></div>`;
-    return `<div class="card ${tileCls}" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      ? `<div class="thumb thumb-img"><img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/></div>`
+      : `<div class="thumb thumb-ico"><span class="glyph ${ic.cls}">${ic.svg}</span></div>`;
+    return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       ${ck}
       <div class="acts">${copyBtn}<button class="btn sm icon card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button></div>
       ${thumb}
@@ -629,6 +636,12 @@ function bindToolbar() {
   if (sellink) sellink.onclick = copySelectedLinks;
   const seldl = document.getElementById('seldl');
   if (seldl) seldl.onclick = downloadSelected;
+
+  // 网格视图：工具栏常驻 全选 / 清空（列表视图用表头复选框，网格无表头故单独提供）
+  const gsa = document.getElementById('grid-selall');
+  if (gsa) gsa.onclick = () => { state.entries.forEach((e) => state.selected.add(e.path)); updateBatchUI(); };
+  const gsc = document.getElementById('grid-selclear');
+  if (gsc) gsc.onclick = () => { state.selected.clear(); updateBatchUI(); };
 
   const search = document.getElementById('search');
   let t;
@@ -1634,6 +1647,12 @@ async function init() {
   } catch (_) {}
   await loadSidebar();
   render();
-  browse('/');
+  // 分享链接 /?path=<enc>（文件夹复制链接、目录直链）进入对应目录，而非永远回根目录
+  let start = '/';
+  try {
+    const p = new URLSearchParams(location.search).get('path');
+    if (p) start = decodeURIComponent(p);
+  } catch (_) {}
+  browse(start);
 }
 init();

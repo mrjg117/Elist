@@ -405,8 +405,9 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     visible = out;
   }
   visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
-  const spec = c.req.query('sort') || 'name_asc';
-  const sorted = sortEntries(visible, spec);
+  // 排序统一在客户端做：服务端恒返回默认序（文件夹居上 + 文件名正序），
+  // 前端按 state.sort 本地重排，避免每次排序都打服务端、刷新后顺序保持。
+  const sorted = sortEntries(visible, 'name_asc');
   return c.json(sorted);
 }
 

@@ -17,6 +17,10 @@
   --accent: #5b9dff;
   --accent-hover: #77b0ff;
   --accent-soft: rgba(91, 157, 255, 0.14);
+  --sort-asc: #51cf66;   /* 排序正序 */
+  --sort-desc: #ff922b;  /* 排序倒序 */
+  --flash-ok: #2f9e44;
+  --flash-bad: #e03131;
   --danger: #ff5d6c;
   --danger-hover: #ff7a86;
   --danger-soft: rgba(255, 93, 108, 0.14);
@@ -46,6 +50,10 @@
   --accent: #2f6fed;
   --accent-hover: #1f5fd8;
   --accent-soft: rgba(47, 111, 237, 0.10);
+  --sort-asc: #2b8a3e;   /* 排序正序 */
+  --sort-desc: #e8590c;  /* 排序倒序 */
+  --flash-ok: #2f9e44;
+  --flash-bad: #e03131;
   --danger: #e23a4c;
   --danger-hover: #c92f40;
   --danger-soft: rgba(226, 58, 76, 0.10);
@@ -241,7 +249,10 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .list th .th-sort:hover { color: var(--text); }
 .list th .glyph.th-sort { color: var(--text-faint); }
 .list th .glyph.th-sort svg { width: 16px; height: 16px; display: block; }
-.list th .sort-ind, .list th .th-sort .sort-ind { font-weight: 600; }
+/* 排序着色：两种颜色分别表示正序/倒序，替代箭头指示 */
+.list th .th-sort.sort-asc, .list th.sort-asc { color: var(--sort-asc); }
+.list th .th-sort.sort-desc, .list th.sort-desc { color: var(--sort-desc); }
+.list th.sort-asc, .list th.sort-desc { font-weight: 600; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }
@@ -272,6 +283,9 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .card .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .meta { font-size: 12px; color: var(--text-dim); }
 .card .acts { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
+/* 点击反馈：复制/下载按钮短暂变色，替代「已复制」弹窗 */
+.flash-ok { background: var(--flash-ok) !important; color: #fff !important; border-color: var(--flash-ok) !important; }
+.flash-bad { background: var(--flash-bad) !important; color: #fff !important; border-color: var(--flash-bad) !important; }
 .card:hover .acts { opacity: 1; }
 
 /* 图标字形（SVG 用 inline-flex 保证垂直居中） */

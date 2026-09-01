@@ -221,18 +221,11 @@ async function browse(path, { fresh = false, search = null } = {}) {
     if (state.search) {
       data = await apiGet(`/api/search?q=${enc(state.search)}&path=${enc(path)}`);
     } else {
-      data = await apiGet(`/api/list?path=${enc(path)}&sort=${state.sort}${fresh ? '&fresh=1' : ''}`);
+      data = await apiGet(`/api/list?path=${enc(path)}${fresh ? '&fresh=1' : ''}`);
     }
     state.entries = Array.isArray(data) ? data : [];
-    // 类型排序：后端不支持，前端本地按类别重排
-    if (state.sort.startsWith('type_')) {
-      const [, dir] = state.sort.split('_');
-      state.entries = [...state.entries].sort((a, b) => {
-        const ra = typeRank(a), rb = typeRank(b);
-        const c = ra === rb ? String(a.name).localeCompare(String(b.name), 'zh') : ra - rb;
-        return dir === 'desc' ? -c : c;
-      });
-    }
+    // 排序统一在客户端做（服务端只返回默认序），刷新/切目录后顺序由 state.sort 保持
+    state.entries = clientSort(state.entries, state.sort);
   } catch (e) {
     if (e.message === 'password_required') {
       state.lockedAt = e.lockedAt;
@@ -248,12 +241,32 @@ async function browse(path, { fresh = false, search = null } = {}) {
   }
 }
 
+// 纯前端排序：仅本地重排已加载的 entries 并就地重绘，不重拉服务端、不丢缓存。
+// 文件夹恒居上（与默认序一致），再按所选字段/方向排文件。
+function clientSort(entries, spec) {
+  const [key, dir] = (spec || 'name_asc').split('_');
+  const desc = dir === 'desc';
+  const dirs = entries.filter((e) => e.isDir);
+  const files = entries.filter((e) => !e.isDir);
+  const cmp = (a, b) => {
+    let r = 0;
+    if (key === 'name') r = String(a.name).localeCompare(String(b.name), 'zh');
+    else if (key === 'time') r = (Date.parse(a.modified || '') || 0) - (Date.parse(b.modified || '') || 0);
+    else if (key === 'size') r = (a.size || 0) - (b.size || 0);
+    else if (key === 'type') { const ra = typeRank(a), rb = typeRank(b); r = ra === rb ? String(a.name).localeCompare(String(b.name), 'zh') : ra - rb; }
+    return desc ? -r : r;
+  };
+  dirs.sort(cmp); files.sort(cmp);
+  return [...dirs, ...files];
+}
+
 function applySort(key) {
   const [k, d] = state.sort.split('_');
   const desc = (k === key) ? d !== 'desc' : false;
   state.sort = `${key}_${desc ? 'desc' : 'asc'}`;
   localStorage.setItem('elist.sort', state.sort);
-  browse(state.path, { fresh: true });
+  state.entries = clientSort(state.entries, state.sort);
+  render();
 }
 
 async function loadSidebar() {
@@ -379,21 +392,21 @@ function renderList() {
   const files = state.entries.filter((e) => !e.isDir);
   const allChecked = files.length > 0 && files.every((e) => state.selected.has(e.path));
   const actsTh = showActs ? `<th class="acts"><button class="btn sm icon" data-act="actshead" title="管理">${ICON.menu}</button></th>` : '';
-  // 当前排序列与方向，用于表头箭头指示
+  // 当前排序列与方向，用于表头着色：正序=sort-asc，倒序=sort-desc（两种颜色，见 styles.css）
   const [sk, sd] = state.sort.split('_');
-  const arrow = (k) => (sk === k ? (sd === 'desc' ? ' ↓' : ' ↑') : '');
+  const sortCls = (k) => (sk === k ? (sd === 'desc' ? 'sort-desc' : 'sort-asc') : '');
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
       <th class="op"><button class="btn sm icon" data-batchlink title="复制选中文件链接">${ICON.external}</button></th>
       <th class="op"><button class="btn sm icon" data-batchdl title="下载选中文件">${ICON.download}</button></th>
       <th class="name"><span class="label">
-        <button class="glyph th-sort" data-sort="type" title="按类型排序">${ICON.grid}${arrow('type')}</button>
-        <button class="txt th-sort" data-sort="name" title="按名称排序">名称${arrow('name')}</button>
+        <button class="glyph th-sort ${sortCls('type')}" data-sort="type" title="按类型排序">${ICON.grid}</button>
+        <button class="txt th-sort ${sortCls('name')}" data-sort="name" title="按名称排序">名称</button>
       </span></th>
       ${actsTh}
-      <th class="size" data-sort="size">大小<span class="sort-ind">${arrow('size')}</span></th>
-      <th class="mod" data-sort="time">修改时间<span class="sort-ind">${arrow('time')}</span></th>
+      <th class="size ${sortCls('size')}" data-sort="size">大小</th>
+      <th class="mod ${sortCls('time')}" data-sort="time">修改时间</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -436,9 +449,9 @@ function bindItems(c) {
   };
   // 链接/下载列头：批量复制/下载当前目录全部文件
   const thLink = c.querySelector('[data-batchlink]');
-  if (thLink) thLink.onclick = (ev) => { ev.stopPropagation(); copySelectedLinks(); };
+  if (thLink) thLink.onclick = (ev) => { ev.stopPropagation(); copySelectedLinks(thLink); };
   const thDl = c.querySelector('[data-batchdl]');
-  if (thDl) thDl.onclick = (ev) => { ev.stopPropagation(); downloadSelected(); };
+  if (thDl) thDl.onclick = (ev) => { ev.stopPropagation(); downloadSelected(thDl); };
   c.querySelectorAll('.row, .card').forEach((el) => {
     el.onclick = (ev) => {
       // 勾选列(.ck)与链接/下载列(.op)整列不触发预览或导航，留出点击误差空间
@@ -509,8 +522,8 @@ function entryMenu(entry) {
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">${opButtons}</div>`;
   const bd = openModal(m);
   if (!state.admin) {
-    m.querySelector('[data-op="copy"]').onclick = () => { closeModal(bd); copyRowLink(entry.path, entry.name); };
-    m.querySelector('[data-op="dl"]').onclick = () => { closeModal(bd); downloadRow(entry.path, entry.name); };
+    m.querySelector('[data-op="copy"]').onclick = (e) => { const b = e.currentTarget; copyRowLink(entry.path, entry.name, b); setTimeout(() => closeModal(bd), 220); };
+    m.querySelector('[data-op="dl"]').onclick = (e) => { const b = e.currentTarget; downloadRow(entry.path, entry.name, b); setTimeout(() => closeModal(bd), 220); };
     return;
   }
   if (!driveRoot) {
@@ -852,15 +865,17 @@ async function probeAccess(path) {
   }
   if (!r.ok && r.status !== 206) throw new ApiError('HTTP ' + r.status, r.status);
 }
-async function copyRowLink(path, name = '') {
+async function copyRowLink(path, name = '', el = null) {
   try {
     const url = await getLink(path, name);
-    await copyShareLink(url);
-  } catch (e) { alertModal('复制失败', e.message, 'danger'); }
+    const ok = await copyShareLink(url);
+    flash(el, ok);
+    if (!ok) alertModal('复制失败', '浏览器禁止复制，请手动复制链接', 'danger');
+  } catch (e) { flash(el, false); alertModal('复制失败', e.message, 'danger'); }
 }
-async function downloadRow(path, name = '') {
-  try { triggerDownload(path, name); }
-  catch (e) { alertModal('下载失败', e.message, 'danger'); }
+async function downloadRow(path, name = '', el = null) {
+  try { triggerDownload(path, name); flash(el, true); }
+  catch (e) { flash(el, false); alertModal('下载失败', e.message, 'danger'); }
 }
 function updateBatchUI() {
   // 网格底部浮动条
@@ -888,7 +903,7 @@ function triggerDownload(path, name = '') {
   a.click();
   a.remove();
 }
-async function copySelectedLinks() {
+async function copySelectedLinks(btn = null) {
   const paths = [...state.selected];
   if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
   const urls = [];
@@ -897,19 +912,21 @@ async function copySelectedLinks() {
       urls.push(await getLink(p));
     } catch { /* 单个失败跳过 */ }
   }
-  if (!urls.length) { alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
+  if (!urls.length) { flash(btn, false); alertModal('复制失败', '未获取到任何直链', 'danger'); return; }
   const text = urls.join('\n');
+  let ok = false;
   try {
     await navigator.clipboard.writeText(text);
-    alertModal('已复制', `已复制 ${urls.length} 个链接到剪贴板`, 'ok');
+    ok = true;
   } catch {
     const i = document.createElement('textarea');
     i.value = text; document.body.appendChild(i); i.select();
     document.execCommand('copy'); i.remove();
-    alertModal('已复制', `已复制 ${urls.length} 个链接`, 'ok');
+    ok = true;
   }
+  flash(btn, ok);
 }
-async function downloadSelected() {
+async function downloadSelected(btn = null) {
   const paths = [...state.selected];
   if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
   let ok = 0;
@@ -917,7 +934,7 @@ async function downloadSelected() {
     try { triggerDownload(p); ok++; } catch { /* 跳过 */ }
     await new Promise((r) => setTimeout(r, 350)); // 错峰，避免浏览器合并/拦截
   }
-  alertModal('已触发下载', `已触发 ${ok}/${paths.length} 个文件下载`, ok ? 'ok' : 'danger');
+  flash(btn, ok > 0);
 }
 
 // ---------------- 预览 ----------------
@@ -943,8 +960,8 @@ function previewBar() {
   </div>`;
 }
 function bindPreviewBar(pb, url) {
-  pb.querySelectorAll('[data-act="copy"]').forEach((b) => { b.onclick = () => copyShareLink(url); });
-  pb.querySelectorAll('[data-act="dl"]').forEach((b) => { b.onclick = () => window.open(url, '_blank'); });
+  pb.querySelectorAll('[data-act="copy"]').forEach((b) => { b.onclick = () => { flash(b, true); copyShareLink(url).then((ok) => flash(b, ok)); }; });
+  pb.querySelectorAll('[data-act="dl"]').forEach((b) => { b.onclick = () => { flash(b, true); window.open(url, '_blank'); }; });
 }
 
 async function openPreview(entry) {
@@ -1105,17 +1122,27 @@ async function showQRCode(url) {
   } catch (e) { alertModal('二维码失败', e.message, 'danger'); }
 }
 
+// 点击反馈：按钮短暂变色（ok=绿/蓝，bad=红），约 1s 后复原。用于复制/下载，替代弹窗。
+function flash(el, ok = true) {
+  if (!el) return;
+  el.classList.remove('flash-ok', 'flash-bad');
+  void el.offsetWidth; // 触发重排以重启动画
+  el.classList.add(ok ? 'flash-ok' : 'flash-bad');
+  setTimeout(() => el.classList.remove('flash-ok', 'flash-bad'), 1000);
+}
+
+// 复制到剪贴板：不再弹窗，返回是否成功（由调用方决定按钮变色）。
 async function copyShareLink(url) {
   try {
     await navigator.clipboard.writeText(url);
-    alertModal('已复制', '链接已复制到剪贴板', 'ok');
+    return true;
   } catch {
     try {
       const i = document.createElement('input');
       i.value = url; document.body.appendChild(i); i.select();
       document.execCommand('copy'); i.remove();
-      alertModal('已复制', '链接已复制到剪贴板', 'ok');
-    } catch { alertModal('复制失败', '浏览器禁止复制，请手动复制链接', 'danger'); }
+      return true;
+    } catch { return false; }
   }
 }
 

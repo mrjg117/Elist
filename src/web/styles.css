@@ -228,25 +228,23 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   .list th.size, .list td.size,
   .list th.mod, .list td.mod { display: none; }
 }
-/* 链接/下载/操作列：无边框图标按钮（列头与单元格统一同款 .btn.icon，尺寸/对齐/风格一致） */
+/* 链接/下载/管理列：无边框图标按钮（列头与单元格同款，尺寸/风格一致）。
+   注意用后代选择器 .list .op / .list .acts 同时匹配 th 与 td：
+   只写 th 会让行内按钮退回 .btn.icon 的 padding:8px 10px（38px 宽），
+   超出列内容区(52-12-12=28px)而溢出，text-align 对溢出元素失效 → 列头与行按钮错位。 */
 .list .op { text-align: center; white-space: nowrap; }
 .list .op .btn.icon,
-.list th.op .btn.icon,
-.list th.acts .btn.icon {
+.list .acts .btn.icon {
   padding: 5px; border: none; background: transparent;
   color: var(--text-dim); border-radius: 8px;
 }
 .list .op .btn.icon:hover,
-.list th.op .btn.icon:hover,
-.list th.acts .btn.icon:hover { background: var(--surface-2); color: var(--text); }
+.list .acts .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op { cursor: pointer; text-align: center; }
-/* 管理列：表头与单元格统一右对齐。
-   必须用 .list thead th.acts（特异性 0,0,3,1）压过 .list thead th 的 (0,0,3,0)，
-   否则基础 text-align:left 仍生效，列头按钮贴左、与行按钮(右对齐)错位。 */
-.list thead th.acts { cursor: pointer; text-align: right; }
-/* 列头图标按钮尺寸与单元格一致（统一 18px），避免列头/单元格大小不一、不对齐 */
-.list th.op .btn.icon svg, .list td.op .btn.icon svg,
-.list th.acts .btn.icon svg, .list td.acts .btn.icon svg { width: 18px; height: 18px; display: block; }
+/* 管理列右对齐，与单元格(.row .acts)一致 */
+.list th.acts { cursor: pointer; text-align: right; }
+/* 图标统一 18px：th 与 td 都要写，避免列头/单元格大小不一 */
+.list .op .btn.icon svg, .list .acts .btn.icon svg { width: 18px; height: 18px; display: block; }
 /* 名称列：图标(类型排序) + 文字(名称排序) 与文件行图标对齐；按钮重置为无边框可点表头 */
 .list th.name { cursor: default; }
 .list th.name .label { display: inline-flex; align-items: center; gap: 8px; }

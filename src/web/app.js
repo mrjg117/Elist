@@ -280,7 +280,9 @@ function clientSort(entries, spec) {
     else if (key === 'type') { const ra = typeRank(a), rb = typeRank(b); r = ra === rb ? String(a.name).localeCompare(String(b.name), 'zh') : ra - rb; }
     return desc ? -r : r;
   };
-  dirs.sort(cmp); files.sort(cmp);
+  // 文件夹始终按名称正序固定，不参与大小/时间等排序的跳动（用户：文件夹不太想手动排序）
+  dirs.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+  files.sort(cmp);
   return [...dirs, ...files];
 }
 
@@ -498,8 +500,8 @@ function bindItems(c) {
       else if (act === 'hide') setFolderPassword(path);
       else if (act === 'delete') doDelete(entry);
       else if (act === 'menu') entryMenu(entry);
-      else if (act === 'copyrow') copyRowLink(path);
-      else if (act === 'dlrow') downloadRow(path);
+      else if (act === 'copyrow') copyRowLink(path, entry.name, btn);
+      else if (act === 'dlrow') downloadRow(path, entry.name, btn);
       else if (act === 'actshead') headerMenu();
     };
   });
@@ -929,7 +931,7 @@ function triggerDownload(path, name = '') {
 }
 async function copySelectedLinks(btn = null) {
   const paths = [...state.selected];
-  if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
+  if (!paths.length) { if (btn) flash(btn, false); return; }
   const urls = [];
   for (const p of paths) {
     try {
@@ -952,7 +954,7 @@ async function copySelectedLinks(btn = null) {
 }
 async function downloadSelected(btn = null) {
   const paths = [...state.selected];
-  if (!paths.length) { alertModal('提示', '请先勾选条目', 'warn'); return; }
+  if (!paths.length) { if (btn) flash(btn, false); return; }
   let ok = 0;
   for (const p of paths) {
     try { triggerDownload(p); ok++; } catch { /* 跳过 */ }

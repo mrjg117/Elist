@@ -233,6 +233,15 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .list th.op, .list th.acts { cursor: pointer; text-align: center; }
 /* 列头图标按钮尺寸与单元格一致（统一 18px），避免列头/单元格大小不一、不对齐 */
 .list th.op .btn.icon svg, .list th.acts .btn.icon svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
+/* 名称列：图标(类型排序) + 文字(名称排序) 与文件行图标对齐；按钮重置为无边框可点表头 */
+.list th.name { cursor: default; }
+.list th.name .label { display: inline-flex; align-items: center; gap: 8px; }
+.list th .th-sort { background: none; border: none; color: inherit; font: inherit; font-size: 12px;
+  font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; padding: 0; }
+.list th .th-sort:hover { color: var(--text); }
+.list th .glyph.th-sort { color: var(--text-faint); }
+.list th .glyph.th-sort svg { width: 16px; height: 16px; display: block; }
+.list th .sort-ind, .list th .th-sort .sort-ind { font-weight: 600; }
 .row { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
 .row:hover { background: var(--surface); }
 .row td { padding: 11px 12px; vertical-align: middle; }

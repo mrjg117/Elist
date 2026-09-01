@@ -289,18 +289,7 @@ function render() {
             <button data-view="list" class="${state.view === 'list' ? 'active' : ''}">${ICON.list}<span>列表</span></button>
             <button data-view="grid" class="${state.view === 'grid' ? 'active' : ''}">${ICON.grid}<span>网格</span></button>
           </div>
-          <select class="input" id="sortsel">
-            <option value="name_asc"${state.sort === 'name_asc' ? ' selected' : ''}>名称 ↑</option>
-            <option value="name_desc"${state.sort === 'name_desc' ? ' selected' : ''}>名称 ↓</option>
-            <option value="time_desc"${state.sort === 'time_desc' ? ' selected' : ''}>时间 ↓</option>
-            <option value="time_asc"${state.sort === 'time_asc' ? ' selected' : ''}>时间 ↑</option>
-            <option value="size_desc"${state.sort === 'size_desc' ? ' selected' : ''}>大小 ↓</option>
-            <option value="size_asc"${state.sort === 'size_asc' ? ' selected' : ''}>大小 ↑</option>
-            <option value="type_asc"${state.sort === 'type_asc' ? ' selected' : ''}>类型 ↑</option>
-            <option value="type_desc"${state.sort === 'type_desc' ? ' selected' : ''}>类型 ↓</option>
-          </select>
           <button class="btn" id="refresh" title="刷新">刷新</button>
-          ${state.admin ? `<button class="btn primary" id="newfolder">${ICON.newfolder}<span>新建</span></button>` : ''}
         </div>
         <div class="content" id="content"></div>
       </main>
@@ -389,15 +378,22 @@ function renderList() {
   }).join('');
   const files = state.entries.filter((e) => !e.isDir);
   const allChecked = files.length > 0 && files.every((e) => state.selected.has(e.path));
-  const actsTh = showActs ? `<th class="acts"><button class="btn sm icon" data-act="actshead" title="操作">${ICON.menu}</button></th>` : '';
+  const actsTh = showActs ? `<th class="acts"><button class="btn sm icon" data-act="actshead" title="管理">${ICON.menu}</button></th>` : '';
+  // 当前排序列与方向，用于表头箭头指示
+  const [sk, sd] = state.sort.split('_');
+  const arrow = (k) => (sk === k ? (sd === 'desc' ? ' ↓' : ' ↑') : '');
   return `<table class="list">
     <thead><tr>
       <th class="ck"><input type="checkbox" class="ckall" ${allChecked ? 'checked' : ''}/></th>
       <th class="op"><button class="btn sm icon" data-batchlink title="复制选中文件链接">${ICON.external}</button></th>
       <th class="op"><button class="btn sm icon" data-batchdl title="下载选中文件">${ICON.download}</button></th>
-      <th class="name" data-sort="name">名称</th>
+      <th class="name"><span class="label">
+        <button class="glyph th-sort" data-sort="type" title="按类型排序">${ICON.grid}${arrow('type')}</button>
+        <button class="txt th-sort" data-sort="name" title="按名称排序">名称${arrow('name')}</button>
+      </span></th>
       ${actsTh}
-      <th class="size" data-sort="size">大小</th><th class="mod" data-sort="time">修改时间</th>
+      <th class="size" data-sort="size">大小<span class="sort-ind">${arrow('size')}</span></th>
+      <th class="mod" data-sort="time">修改时间<span class="sort-ind">${arrow('time')}</span></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -467,8 +463,25 @@ function bindItems(c) {
       else if (act === 'menu') entryMenu(entry);
       else if (act === 'copyrow') copyRowLink(path);
       else if (act === 'dlrow') downloadRow(path);
+      else if (act === 'actshead') headerMenu();
     };
   });
+  // 列头排序：每次列表重建后重新绑定（含名称列内的 type/name 两个触发区）
+  c.querySelectorAll('[data-sort]').forEach((el) => {
+    el.onclick = () => applySort(el.dataset.sort);
+  });
+}
+
+// 列头「管理」图标弹出的全局操作菜单（含新建文件夹，替代原工具栏新建按钮）
+function headerMenu() {
+  const m = document.createElement('div');
+  m.className = 'modal';
+  m.innerHTML = `<h3>管理</h3>
+    <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
+      <button class="btn block" data-act="mkdir">${ICON.newfolder}<span>新建文件夹</span></button>
+    </div>`;
+  const bd = openModal(m);
+  m.querySelector('[data-act="mkdir"]').onclick = () => { closeModal(bd); doMkdir(); };
 }
 
 // 网格卡片 ⋯ 操作菜单（盘符挂载根禁用移动/重命名/删除——移动根=整盘改名移走，危险）
@@ -518,14 +531,9 @@ function bindToolbar() {
   document.getElementById('viewseg').querySelectorAll('button').forEach((b) => {
     b.onclick = () => { state.view = b.dataset.view; localStorage.setItem('elist.view', state.view); render(); };
   });
-  const sortsel = document.getElementById('sortsel');
-  sortsel.onchange = () => { state.sort = sortsel.value; localStorage.setItem('elist.sort', state.sort); browse(state.path, { fresh: true }); };
   document.getElementById('refresh').onclick = () => browse(state.path, { fresh: true });
   document.getElementById('theme').onclick = toggleTheme;
   document.getElementById('admin').onclick = () => state.admin ? adminMenu() : login();
-
-  const nf = document.getElementById('newfolder');
-  if (nf) nf.onclick = () => doMkdir();
 
   // 底部浮动批量条
   const selall = document.getElementById('selall');
@@ -555,10 +563,6 @@ function bindToolbar() {
       else browse(state.path);
     }, 300);
   };
-
-  document.querySelectorAll('th[data-sort]').forEach((th) => {
-    th.onclick = () => applySort(th.dataset.sort);
-  });
 }
 
 function toggleTheme() {
@@ -822,8 +826,8 @@ function rawUrl(path, download = false, name = '') {
   const seg = name ? `/${encodeURIComponent(name)}` : '';
   return `${location.origin}/api/raw${seg}${q}${download ? '&download=1' : ''}`;
 }
-// 复制链接纯前端拼出，无后端请求；保留异步签名以兼容既有 await 调用。
-function getLink(path, name = '') { return rawUrl(path, false, name); }
+// 复制链接 = 复制下载链接（带 download=1，访问即下载）。纯前端拼出，无后端请求。
+function getLink(path, name = '') { return rawUrl(path, true, name); }
 
 // 打开预览前做一次极小权限探测（Range 0-0，只取状态、丢 body），
 // 保留受密码保护目录的「需要密码」提示；复用 /api/raw 的同款门禁。

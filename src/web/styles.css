@@ -240,11 +240,13 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .list th.op .btn.icon:hover,
 .list th.acts .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op { cursor: pointer; text-align: center; }
-/* 管理列：表头与单元格统一右对齐，避免列头按钮(居中)与行按钮(右对齐)错位 */
-.list th.acts { cursor: pointer; text-align: right; }
+/* 管理列：表头与单元格统一右对齐。
+   必须用 .list thead th.acts（特异性 0,0,3,1）压过 .list thead th 的 (0,0,3,0)，
+   否则基础 text-align:left 仍生效，列头按钮贴左、与行按钮(右对齐)错位。 */
+.list thead th.acts { cursor: pointer; text-align: right; }
 /* 列头图标按钮尺寸与单元格一致（统一 18px），避免列头/单元格大小不一、不对齐 */
 .list th.op .btn.icon svg, .list td.op .btn.icon svg,
-.list th.acts .btn.icon svg, .list td.acts .btn.icon svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
+.list th.acts .btn.icon svg, .list td.acts .btn.icon svg { width: 18px; height: 18px; display: block; }
 /* 名称列：图标(类型排序) + 文字(名称排序) 与文件行图标对齐；按钮重置为无边框可点表头 */
 .list th.name { cursor: default; }
 .list th.name .label { display: inline-flex; align-items: center; gap: 8px; }
@@ -353,7 +355,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 }
 /* 侧栏管理员/主题图标按钮保留文字左对齐（block 语义），仅去掉边框 */
 .side-foot #admin, .side-foot #theme { justify-content: flex-start; width: 100%; }
-/* 行内 ⋯ 按钮收紧方形尺寸 */
+/* 列表行 ⋯ 按钮：padding 集中定义于此（统一 5px×6px），其它处不再重复 */
 .row-menu { padding: 5px 6px; }
 .card-menu { padding: 4px 7px; }
 
@@ -570,14 +572,11 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .state-msg .state-ico { color: var(--text-faint); opacity: 0.55; }
 .state-msg .state-ico svg { width: 42px; height: 42px; display: block; }
 
-/* 列表行 ⋯ 按钮 */
-.row-menu { padding: 4px 8px; }
+/* 卡片 hover 微调 */
+.card:hover { box-shadow: var(--shadow); }
 
 /* 预览标题分隔线 */
 .preview-modal .pv-title { border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
-
-/* 卡片 hover 微调 */
-.card:hover { box-shadow: var(--shadow); }
 
 /* 隐藏/加密徽标 */
 .badge { margin-left: 8px; font-size: 12px; opacity: 0.85; vertical-align: -1px; white-space: nowrap; }

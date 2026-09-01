@@ -583,8 +583,7 @@ function bindLazyThumbs(c) {
 }
 async function loadThumb(img) {
   try {
-    const { url } = await apiGet(`/api/link?path=${enc(img.dataset.path)}`);
-    img.src = url;
+    img.src = rawUrl(img.dataset.path);
   } catch { img.remove(); }
 }
 
@@ -813,13 +812,34 @@ async function doDelete(entry) {
 }
 
 // ---------------- 批量选择 ----------------
-// 直链缓存（session 内复用，避免每次点击实时生成；直链本身有 TTL，可接受）
-const linkCache = new Map();
-async function getLink(path) {
-  if (linkCache.has(path)) return linkCache.get(path);
-  const { url } = await apiGet(`/api/link?path=${enc(path)}`);
-  linkCache.set(path, url);
-  return url;
+// 代理链接：完全由前端拼出（同源 /api/raw），无需打后端 round-trip。
+// 复制链接与下载按钮共用这一口；download=true 切 attachment 触发下载。
+function rawUrl(path, download = false) {
+  return `${location.origin}/api/raw?path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`;
+}
+// 复制链接纯前端拼出，无后端请求；保留异步签名以兼容既有 await 调用。
+function getLink(path) { return rawUrl(path); }
+
+// 打开预览前做一次极小权限探测（Range 0-0，只取状态、丢 body），
+// 保留受密码保护目录的「需要密码」提示；复用 /api/raw 的同款门禁。
+// 仅此主动动作触发一次请求，复制/下载/缩略图均不再打后端。
+async function probeAccess(path) {
+  const headers = pwHeader();
+  if (state.adminPw) headers['X-Admin-Password'] = state.adminPw;
+  headers['Range'] = 'bytes=0-0';
+  const r = await fetch(rawUrl(path), { headers });
+  if (r.body && r.body.cancel) { try { r.body.cancel(); } catch {} }
+  if (r.status === 401 || r.status === 403) {
+    let data = {};
+    try { data = await r.json().catch(() => ({})); } catch {}
+    if (data.error === 'password_required') {
+      const e = new ApiError('password_required', r.status);
+      e.lockedAt = data.lockedAt;
+      throw e;
+    }
+    throw new ApiError(data.error || ('HTTP ' + r.status), r.status);
+  }
+  if (!r.ok && r.status !== 206) throw new ApiError('HTTP ' + r.status, r.status);
 }
 async function copyRowLink(path) {
   try {
@@ -844,12 +864,12 @@ function updateBatchUI() {
   if (all) all.checked = files.length > 0 && files.every((e) => state.selected.has(e.path));
 }
 
-// 触发下载：走同域 /api/download?proxy=1（worker 服务端拉取直链并流式回传字节），
-// 前端 fetch→blob 触发下载。绝不跳转当前页、不弹多窗、不受跨域 CORS 限制。
+// 触发下载：走复制链接同一口 /api/raw?download=1（worker 同域流式回传），
+// 绝不跳转当前页、不弹多窗、不暴露存储直链、不受跨域 CORS 限制。
 // 批量下载复用此函数错峰触发即可，不会破坏页面。
 function triggerDownload(path) {
   const a = document.createElement('a');
-  a.href = `/api/download?path=${enc(path)}&proxy=1`;
+  a.href = rawUrl(path, true);
   a.download = basename(path);
   a.rel = 'noopener';
   a.style.display = 'none';
@@ -930,7 +950,8 @@ async function openPreview(entry) {
   m.querySelector('[data-pv="info"]').onclick = () => showFileInfo(entry);
   const pb = m.querySelector('#pb');
   try {
-    const { url } = await apiGet(`/api/link?path=${enc(entry.path)}`);
+    await probeAccess(entry.path);
+    const url = rawUrl(entry.path);
     const type = mediaType(entry.name);
     await renderPreview(type, entry, url, pb);
   } catch (e) {

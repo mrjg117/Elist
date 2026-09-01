@@ -391,43 +391,9 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * GET /api/link?path=/s3/photos/a.jpg
- * 校验通过后返回直链 JSON { url, cacheControl }。前端拿它做预览/下载，
- * 密码不进任何 URL（302 目标签名的存储直链同样无密码）。
- */
-export async function handleLink(c: Context<{ Bindings: Env }>) {
-  const path = c.req.query('path');
-  if (!path) return c.json({ error: 'path required' }, 400);
-  const normalizedPath = normalize(path);
-  const pws = collectPws(c);
-  const fresh = isFresh(c);
-
-  // 确保配置已加载（防止冷启动绕过门禁）
-  await loadXlsxConfig(c, fresh);
-
-  const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
-  const readText = (full: string) => driver.readText(toRest(full, mount));
-
-  // 同时校验文件路径本身和父目录路径（支持文件级密码）；管理员免密
-  const admin = await isAdminRequest(c);
-  if (!admin) {
-    const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
-    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
-  }
-
-  // 返回经 Elist 的代理链接（/api/raw?path=），而非存储原生直链：
-  // 不暴露签名 URL、无过期、复用 Elist 门禁/隐藏；预览/复制/缩略图均走同源，免受上游 CORS 限制。
-  const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
-  const base = new URL(c.req.url);
-  base.pathname = '/api/raw';
-  base.search = `?path=${encodeURIComponent(normalizedPath)}`;
-  return c.json({ url: base.toString(), cacheControl: cc });
-}
-
-/**
  * GET /api/raw?path=/s3/photos/a.jpg[&download=1]
- * 经 Elist 的代理下载/预览端点（同源、流式、支持 Range）。
- * 与 /api/link 返回的本链接一一对应：浏览器预览/复制分享都走这里，
+ * 经 Elist 的统一代理端点（同源、流式、支持 Range）：复制链接与下载按钮
+ * 共用这一口（下载加 ?download=1），浏览器预览/复制分享也都走这里。
  * 绝不跳转、不暴露存储签名直链、不受上游 CORS 限制。
  * ?download=1 以 attachment 触发下载；否则 inline（预览/嵌入）。文件名经
  * Content-Disposition 的 filename*=UTF-8'' 正确传递，故短链接也能正确命名下载文件。
@@ -486,59 +452,6 @@ export async function handleRaw(c: Context<{ Bindings: Env }>) {
 
   // 流式回传（不落内存）：直接桥接上游 body
   return new Response(upstream.body, { status: upstream.status, headers: out });
-}
-
-/**
- * GET /api/download?path=/s3/photos/a.jpg  -> 302 直链（兼容无头/脚本场景）
- * 密码经 X-Folder-Password 头（不再支持 ?pw=）。
- */
-export async function handleDownload(c: Context<{ Bindings: Env }>) {
-  const path = c.req.query('path');
-  if (!path) return c.json({ error: 'path required' }, 400);
-  const normalizedPath = normalize(path);
-  const pws = collectPws(c);
-  const fresh = isFresh(c);
-
-  // 确保配置已加载（防止冷启动绕过门禁）
-  await loadXlsxConfig(c, fresh);
-
-  const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
-  const readText = (full: string) => driver.readText(toRest(full, mount));
-
-  // 同时校验文件路径本身和父目录路径（支持文件级密码）；管理员免密
-  const admin = await isAdminRequest(c);
-  if (!admin) {
-    const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
-    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
-  }
-
-  const url = await driver.link(rest);
-  const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
-
-  // 代理下载模式（?proxy=1）：worker 服务端拉取直链并流式回传字节 + Content-Disposition，
-  // 前端走同域 fetch→blob 触发下载，绝不跳转当前页、不弹多窗、不受跨域 CORS 限制。
-  // 大文件上行 fetch 失败或上游非 2xx 时回退到 302 直链（浏览器原生下载）。
-  if (c.req.query('proxy') === '1') {
-    try {
-      const upstream = await fetch(url);
-      if (!upstream.ok && upstream.status !== 206) throw new Error('upstream ' + upstream.status);
-      const headers = new Headers();
-      const ct = upstream.headers.get('Content-Type');
-      if (ct) headers.set('Content-Type', ct);
-      const cl = upstream.headers.get('Content-Length');
-      if (cl) headers.set('Content-Length', cl);
-      headers.set('Cache-Control', cc);
-      const fname = basenameOf(normalizedPath);
-      headers.set('Content-Disposition', `attachment; filename="${encodeURIComponent(fname)}"; filename*=UTF-8''${encodeURIComponent(fname)}`);
-      return new Response(upstream.body, { status: 200, headers });
-    } catch {
-      // 回退 302 直链
-    }
-  }
-  return new Response(null, {
-    status: 302,
-    headers: { Location: url, 'Cache-Control': cc },
-  });
 }
 
 /**

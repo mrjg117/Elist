@@ -51,7 +51,7 @@ export async function checkPathPassword(
   provided: string[],
   _readText?: ReadText,
   _fresh = false
-): Promise<{ ok: boolean; lockedAt?: string }> {
+): Promise<{ ok: boolean; lockedAt?: string; required?: boolean }> {
   // 未加载时拒绝访问（安全：防止冷启动绕过）
   if (!xlsxConfig.isLoaded()) {
     return { ok: false, lockedAt: fullPath };
@@ -59,19 +59,21 @@ export async function checkPathPassword(
 
   const segs = fullPath.split('/').filter(Boolean);
   let acc = '';
+  let required = false;
   for (const s of segs) {
     acc += '/' + s;
     const pwConfig = xlsxConfig.getPassword(acc);
     if (!pwConfig) continue; // 无密码配置 = 该层公开
 
+    required = true; // 祖先链中存在密码配置
     const expectedPassword = pwConfig.password;
     // 使用恒定时间比较，防止计时攻击
     const matched = provided.some(p => constantTimeCompare(p, expectedPassword));
     if (!matched) {
-      return { ok: false, lockedAt: acc };
+      return { ok: false, lockedAt: acc, required: true };
     }
   }
-  return { ok: true };
+  return { ok: true, required };
 }
 
 /** 某条目是否应被隐藏（从内存 Map 检查）。 */

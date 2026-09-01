@@ -412,14 +412,21 @@ export async function handleRaw(c: Context<{ Bindings: Env }>) {
 
   // 复用与 link/download 一致的门禁（文件级 + 父目录级密码；管理员免密）
   const admin = await isAdminRequest(c);
+  let protectedResource = false;
   if (!admin) {
     const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
     if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+    // 命中门禁 = 祖先链存在密码配置；即便本次已提供正确密码，URL 不含密码头，
+    // CDN 按 URL 缓存会被无密码访客命中 -> 必须用 private，禁止边缘/共享缓存。
+    protectedResource = gate.required === true;
   }
 
   // 取存储原生直链（仅用于 worker 内回源，绝不吐给客户端）
   const upstreamUrl = await driver.link(rest);
-  const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
+  // 受密码保护内容禁止公共缓存（防越权命中）；其余维持可缓存以保图片墙收益。
+  const cc = protectedResource
+    ? 'private, no-store'
+    : (mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300');
 
   const reqHeaders = new Headers();
   const range = c.req.header('Range');
@@ -445,7 +452,10 @@ export async function handleRaw(c: Context<{ Bindings: Env }>) {
   const cr = upstream.headers.get('Content-Range'); if (cr) out.set('Content-Range', cr);
   out.set('Cache-Control', cc);
   out.set('Accept-Ranges', 'bytes');
-  const fname = basenameOf(normalizedPath);
+  // 文件名优先取 URL 路径段 /api/raw/<name>?path=...（兼容按后缀命名的顽固下载器，
+  // 即 alist "Customised" 形式）；未提供该段时回退到路径 basename。
+  const nameParam = c.req.param('name');
+  const fname = nameParam ? decodeURIComponent(nameParam) : basenameOf(normalizedPath);
   const encName = encodeURIComponent(fname);
   const disp = c.req.query('download') === '1' ? 'attachment' : 'inline';
   out.set('Content-Disposition', `${disp}; filename="${encName}"; filename*=UTF-8''${encName}`);

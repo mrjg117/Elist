@@ -496,8 +496,8 @@ function entryMenu(entry) {
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">${opButtons}</div>`;
   const bd = openModal(m);
   if (!state.admin) {
-    m.querySelector('[data-op="copy"]').onclick = () => { closeModal(bd); copyRowLink(entry.path); };
-    m.querySelector('[data-op="dl"]').onclick = () => { closeModal(bd); downloadRow(entry.path); };
+    m.querySelector('[data-op="copy"]').onclick = () => { closeModal(bd); copyRowLink(entry.path, entry.name); };
+    m.querySelector('[data-op="dl"]').onclick = () => { closeModal(bd); downloadRow(entry.path, entry.name); };
     return;
   }
   if (!driveRoot) {
@@ -814,11 +814,16 @@ async function doDelete(entry) {
 // ---------------- 批量选择 ----------------
 // 代理链接：完全由前端拼出（同源 /api/raw），无需打后端 round-trip。
 // 复制链接与下载按钮共用这一口；download=true 切 attachment 触发下载。
-function rawUrl(path, download = false) {
-  return `${location.origin}/api/raw?path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`;
+// name: 已知文件名时附加到 URL 路径段（/api/raw/<enc name>?path=…），
+// 使链接以真实扩展名结尾（兼容按后缀命名的顽固下载器，即 alist "Customised" 形式）；
+// 缺失时回退短形式 /api/raw?path=…（由 Content-Disposition 的 filename* 正确命名）。
+function rawUrl(path, download = false, name = '') {
+  const q = `?path=${encodeURIComponent(path)}`;
+  const seg = name ? `/${encodeURIComponent(name)}` : '';
+  return `${location.origin}/api/raw${seg}${q}${download ? '&download=1' : ''}`;
 }
 // 复制链接纯前端拼出，无后端请求；保留异步签名以兼容既有 await 调用。
-function getLink(path) { return rawUrl(path); }
+function getLink(path, name = '') { return rawUrl(path, false, name); }
 
 // 打开预览前做一次极小权限探测（Range 0-0，只取状态、丢 body），
 // 保留受密码保护目录的「需要密码」提示；复用 /api/raw 的同款门禁。
@@ -841,14 +846,14 @@ async function probeAccess(path) {
   }
   if (!r.ok && r.status !== 206) throw new ApiError('HTTP ' + r.status, r.status);
 }
-async function copyRowLink(path) {
+async function copyRowLink(path, name = '') {
   try {
-    const url = await getLink(path);
+    const url = await getLink(path, name);
     await copyShareLink(url);
   } catch (e) { alertModal('复制失败', e.message, 'danger'); }
 }
-async function downloadRow(path) {
-  try { triggerDownload(path); }
+async function downloadRow(path, name = '') {
+  try { triggerDownload(path, name); }
   catch (e) { alertModal('下载失败', e.message, 'danger'); }
 }
 function updateBatchUI() {
@@ -867,9 +872,9 @@ function updateBatchUI() {
 // 触发下载：走复制链接同一口 /api/raw?download=1（worker 同域流式回传），
 // 绝不跳转当前页、不弹多窗、不暴露存储直链、不受跨域 CORS 限制。
 // 批量下载复用此函数错峰触发即可，不会破坏页面。
-function triggerDownload(path) {
+function triggerDownload(path, name = '') {
   const a = document.createElement('a');
-  a.href = rawUrl(path, true);
+  a.href = rawUrl(path, true, name);
   a.download = basename(path);
   a.rel = 'noopener';
   a.style.display = 'none';
@@ -951,7 +956,7 @@ async function openPreview(entry) {
   const pb = m.querySelector('#pb');
   try {
     await probeAccess(entry.path);
-    const url = rawUrl(entry.path);
+    const url = rawUrl(entry.path, false, entry.name);
     const type = mediaType(entry.name);
     await renderPreview(type, entry, url, pb);
   } catch (e) {

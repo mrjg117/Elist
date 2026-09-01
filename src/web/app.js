@@ -50,6 +50,9 @@ const state = {
   drives: [],
   showHidden: false,
   selected: new Set(),
+  dirEntries: [],      // 当前目录完整 listing（未搜索），供纯前端过滤复用
+  listedPath: null,    // dirEntries 对应的 path，变化时重新拉取
+  searchedRoot: false, // 上次拉取是否为根目录搜索结果（用于清空搜索时回退到普通列表）
 };
 
 // ---------------- 工具 ----------------
@@ -62,6 +65,12 @@ function ext(name) {
   return i >= 0 ? name.slice(i + 1).toLowerCase() : '';
 }
 function basename(p) { const i = p.lastIndexOf('/'); return p.slice(i + 1); }
+// 子目录条目后端不再下发 name（恒等于 basename(path)）；根目录盘标题保留。
+// 此处统一补回 name，避免下游渲染/排序逻辑改动。
+function normalizeEntries(arr) {
+  for (const e of arr) if (e.name == null) e.name = basename(e.path);
+  return arr;
+}
 function parentDir(p) { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); }
 function joinPath(dir, name) {
   if (dir === '/' || dir === '') return '/' + name;
@@ -217,15 +226,30 @@ async function browse(path, { fresh = false, search = null } = {}) {
   state.lockedAt = null;
   render();
   try {
-    let data;
-    if (state.search) {
-      data = await apiGet(`/api/search?q=${enc(state.search)}&path=${enc(path)}`);
-    } else {
-      data = await apiGet(`/api/list?path=${enc(path)}${fresh ? '&fresh=1' : ''}`);
+    // 根目录搜索需跨盘扫描，仍走后端 /api/search；子目录内搜索改为纯前端过滤（零 worker 往返）。
+    const searchingRoot = !!state.search && path === '/';
+    // 仅在以下情况重新拉取：强制刷新 / 切目录 / 根目录搜索 / 刚从根目录搜索清空（回退普通列表）。
+    const needFetch = fresh || path !== state.listedPath || searchingRoot || (state.search === '' && state.searchedRoot);
+    if (needFetch) {
+      let data;
+      if (searchingRoot) {
+        data = await apiGet(`/api/search?q=${enc(state.search)}&path=/`);
+        state.searchedRoot = true;
+      } else {
+        data = await apiGet(`/api/list?path=${enc(path)}${fresh ? '&fresh=1' : ''}`);
+        state.searchedRoot = false;
+      }
+      state.dirEntries = normalizeEntries(Array.isArray(data) ? data : []);
+      state.listedPath = path;
     }
-    state.entries = Array.isArray(data) ? data : [];
+    // 当前目录内搜索：直接对内存 listing 做前端过滤，输入即出、不消耗 CF CPU。
+    let view = state.dirEntries;
+    if (state.search && path !== '/') {
+      const q = state.search.toLowerCase();
+      view = state.dirEntries.filter((e) => e.name.toLowerCase().includes(q) || e.path.toLowerCase().includes(q));
+    }
     // 排序统一在客户端做（服务端只返回默认序），刷新/切目录后顺序由 state.sort 保持
-    state.entries = clientSort(state.entries, state.sort);
+    state.entries = clientSort(view, state.sort);
   } catch (e) {
     if (e.message === 'password_required') {
       state.lockedAt = e.lockedAt;

@@ -404,11 +404,14 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
     for (const e of visible) out.push({ ...e, locked: !!(await xlsxConfig.getPassword(normalize(e.path))) });
     visible = out;
   }
-  visible = visible.filter((e) => !MARKER_FILES.has(e.name));// 排序
+  visible = visible.filter((e) => !MARKER_FILES.has(basenameOf(e.path)));// 排序
   // 排序统一在客户端做：服务端恒返回默认序（文件夹居上 + 文件名正序），
   // 前端按 state.sort 本地重排，避免每次排序都打服务端、刷新后顺序保持。
   const sorted = sortEntries(visible, 'name_asc');
-  return c.json(sorted);
+  // 子目录条目 name 恒等于 basename(path)，由前端推导（省 JSON 体积）；
+  // 仅根目录(盘列表)保留 name（盘标题），因前端无法从 path 推导友好标题。
+  const stripped = sorted.map((e) => { const { name, ...rest } = e; return rest; });
+  return c.json(stripped);
 }
 
 /**
@@ -587,7 +590,7 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
         if (matched.length >= 200) break;
       }
     }
-    return c.json(matched);
+    return c.json(matched.map((e) => { const { name, ...rest } = e; return rest; }));
   }
 
   const { mount } = await dispatch(c.env, path);
@@ -602,9 +605,9 @@ export async function handleSearch(c: Context<{ Bindings: Env }>) {
     if (admin) { matched.push(entry); if (matched.length >= 200) break; continue; }
     const gate = await checkPathPassword(parentPath, pws);
     if (gate.ok) {
-      matched.push(entry);
-      if (matched.length >= 200) break;
-    }
+        matched.push(entry);
+        if (matched.length >= 200) break;
+      }
   }
-  return c.json(matched);
+  return c.json(matched.map((e) => { const { name, ...rest } = e; return rest; }));
 }

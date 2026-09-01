@@ -12,6 +12,10 @@ keep_vars = true
 directory = "./src/web"
 html_handling = "auto-trailing-slash"
 not_found_handling = "single-page-application"
+# Worker 先于静态资源接管所有请求：否则带扩展名的 /api/raw/<文件名> 会被静态资源层
+# 误判为静态文件、找不到后按 SPA 兜底返回 index.html（表现为点击复制链接跳主页）。
+# 设为 true 后，/api/* 与 /dav/* 始终进 Worker；其余请求由 worker 末行兜底经 ASSETS 提供前端。
+run_worker_first = true
 
 # =====================================================================
 # 配置方案（v4，变量拆分）：

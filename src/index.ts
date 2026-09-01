@@ -67,6 +67,11 @@ app.onError((err, c) => {
   return c.json({ error: 'internal_error' }, 500);
 });
 
+// SPA 兜底：未命中任何 API/DAV 路由时，由 Workers Assets 提供静态前端（含 index.html 与 SPA 回落）。
+// 配合 wrangler.toml 的 run_worker_first = true，保证 /api/raw/<文件名> 这类带扩展名路径也先经 Worker，
+// 不会被静态资源层误判为静态文件而返回 index.html（点击复制链接跳主页的根因）。
+app.get('*', (c) => c.env.ASSETS.fetch(c.req.raw));
+
 export default {
   fetch: app.fetch,
   scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {

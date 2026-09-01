@@ -214,6 +214,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   text-align: left; font-weight: 600; font-size: 12px; color: var(--text-faint);
   padding: 9px 12px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; background: var(--bg); z-index: 1; cursor: pointer; user-select: none;
+  vertical-align: middle;
 }
 .list thead th:hover { color: var(--text); }
 /* 固定列宽（类选择器，兼容非 admin 隐藏操作列后列数变化：☐/链接/下载/名称/操作/大小/修改时间）：
@@ -225,7 +226,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .list th.mod, .list td.mod { width: 132px; }
 @media (max-width: 820px) {
   .list th.size, .list td.size,
-  .list th.mod, .list td.mod { width: auto; }
+  .list th.mod, .list td.mod { display: none; }
 }
 /* 链接/下载/操作列：无边框图标按钮（列头与单元格统一同款 .btn.icon，尺寸/对齐/风格一致） */
 .list .op { text-align: center; white-space: nowrap; }
@@ -240,7 +241,8 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .list th.acts .btn.icon:hover { background: var(--surface-2); color: var(--text); }
 .list th.op, .list th.acts { cursor: pointer; text-align: center; }
 /* 列头图标按钮尺寸与单元格一致（统一 18px），避免列头/单元格大小不一、不对齐 */
-.list th.op .btn.icon svg, .list th.acts .btn.icon svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
+.list th.op .btn.icon svg, .list td.op .btn.icon svg,
+.list th.acts .btn.icon svg, .list td.acts .btn.icon svg { width: 18px; height: 18px; display: block; margin: 0 auto; }
 /* 名称列：图标(类型排序) + 文字(名称排序) 与文件行图标对齐；按钮重置为无边框可点表头 */
 .list th.name { cursor: default; }
 .list th.name .label { display: inline-flex; align-items: center; gap: 8px; }
@@ -248,7 +250,7 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; padding: 0; }
 .list th .th-sort:hover { color: var(--text); }
 .list th .glyph.th-sort { color: var(--text-faint); }
-.list th .glyph.th-sort svg { width: 16px; height: 16px; display: block; }
+.list th .glyph.th-sort svg { width: 18px; height: 18px; display: block; }
 /* 排序着色：两种颜色分别表示正序/倒序，替代箭头指示 */
 .list th .th-sort.sort-asc, .list th.sort-asc { color: var(--sort-asc); }
 .list th .th-sort.sort-desc, .list th.sort-desc { color: var(--sort-desc); }

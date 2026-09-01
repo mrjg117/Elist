@@ -70,8 +70,9 @@ app.onError((err, c) => {
 // SPA 兜底：未命中任何 API/DAV 路由时，由 Workers Assets 提供静态前端（含 index.html 与 SPA 回落）。
 // 配合 wrangler.toml 的 run_worker_first = true，保证 /api/raw/<文件名> 这类带扩展名路径也先经 Worker，
 // 不会被静态资源层误判为静态文件而返回 index.html（点击复制链接跳主页的根因）。
-// 健壮性增强：ASSETS 绑定异常/未注入时不再抛 500 导致整站崩溃，降级返回内联首页（index_html text_blobs），
-// 保证"起不来"的最坏情况变为"可显示首页"而非白屏 500。线上 ASSETS 正常时始终走 ASSETS，零影响。
+// 健壮性增强：ASSETS 绑定异常/未注入时不再抛 500 导致整站崩溃，降级返回内联占位首页，
+// 保证"起不来"的最坏情况变为"可显示提示页"而非白屏 500。线上 ASSETS 正常时始终走 ASSETS，零影响。
+// 注意：不可用 [text_blobs]（ESM worker 不支持，会导致部署校验失败），降级页直接内联在代码里。
 app.get('*', async (c) => {
   const assets = (c.env as any).ASSETS;
   if (assets && typeof assets.fetch === 'function') {
@@ -80,9 +81,9 @@ app.get('*', async (c) => {
       if (r) return r;
     } catch { /* 落入下方兜底 */ }
   }
-  const html = (c.env as any).index_html;
   return c.html(
-    html ?? '<!doctype html><meta charset="utf-8"><title>Elist</title><h1>站点资源暂不可用</h1><p>静态资源加载异常，请检查部署或稍后重试。</p>',
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Elist</title></head>' +
+    '<body><h1>Elist</h1><p>静态资源（ASSETS）暂时不可用，请检查部署配置后重试。</p></body></html>',
     200,
   );
 });

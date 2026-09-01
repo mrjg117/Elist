@@ -20,11 +20,6 @@ not_found_handling = "single-page-application"
 # 设为 true 后，/api/* 与 /dav/* 始终进 Worker；其余请求由 worker 末行兜底经 ASSETS 提供前端。
 run_worker_first = true
 
-# SPA 兜底的降级首页：ASSETS 绑定异常/未注入时由 Worker 返回，保证整站不白屏 500。
-# 线上 ASSETS 正常时不会走到此处（始终优先 ASSETS），仅作极端兜底。
-[text_blobs]
-index_html = "src/web/index.html"
-
 # =====================================================================
 # 配置方案（v4，变量拆分）：
 #   - AUTH_<NAME>：账号机密（type、凭据等）

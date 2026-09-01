@@ -248,8 +248,21 @@ async function browse(path, { fresh = false, search = null } = {}) {
       const q = state.search.toLowerCase();
       view = state.dirEntries.filter((e) => e.name.toLowerCase().includes(q) || e.path.toLowerCase().includes(q));
     }
-    // 排序统一在客户端做（服务端只返回默认序），刷新/切目录后顺序由 state.sort 保持
-    state.entries = clientSort(view, state.sort);
+    // 排序策略：
+    // - 搜索结果：按 state.sort 普通排序（跨盘/跨目录结果，排序有意义）
+    // - 根目录(盘列表)：保持服务端返回的挂载顺序（由 MOUNT_ORDER 变量控制，与左侧栏一致），
+    //   列表/网格视图都按此顺序，不强制默认排序（用户：根目录文件夹按挂载顺序排列）
+    // - 子目录网格视图：图片墙排序（可预览图片居上、其余按类型）
+    // - 其余子目录列表视图：按 state.sort 前端排序（文件夹恒居上 + 所选字段；文件夹固定名称正序）
+    if (state.search) {
+      state.entries = clientSort(view, state.sort);
+    } else if (path === '/') {
+      state.entries = view;
+    } else if (state.view === 'grid') {
+      state.entries = wallSort(view);
+    } else {
+      state.entries = clientSort(view, state.sort);
+    }
   } catch (e) {
     if (e.message === 'password_required') {
       state.lockedAt = e.lockedAt;
@@ -284,6 +297,21 @@ function clientSort(entries, spec) {
   dirs.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
   files.sort(cmp);
   return [...dirs, ...files];
+}
+
+// 网格图片墙排序：与列表排序解耦——网格视图「只按类型排、可预览类在上边」。
+// 可预览图片(直接图片预览)恒居最上（按名称），其余条目按类型权重(文件夹/视频/音频/压缩/文档/代码/其他)排序；
+// 非图片条目统一以小图标瓦片呈现，故此排序即决定非均匀墙的上下分组。
+function wallSort(entries) {
+  const imgs = entries.filter((e) => !e.isDir && mediaType(e.name) === 'image');
+  const rest = entries.filter((e) => !( !e.isDir && mediaType(e.name) === 'image'));
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), 'zh');
+  imgs.sort(byName);
+  rest.sort((a, b) => {
+    const ra = typeRank(a), rb = typeRank(b);
+    return ra === rb ? byName(a, b) : ra - rb;
+  });
+  return [...imgs, ...rest];
 }
 
 function applySort(key) {
@@ -407,7 +435,7 @@ function renderList() {
     const isFile = !e.isDir;
     return `<tr class="row" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
       <td class="ck">${isFile ? `<input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/>` : ''}</td>
-      <td class="op">${isFile ? `<button class="btn sm icon" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>` : ''}</td>
+      <td class="op">${isFile ? `<button class="btn sm icon" data-act="copyrow" data-path="${esc(e.path)}" title="复制链接">${ICON.external}</button>` : (e.isDir ? `<button class="btn sm icon" data-act="copydir" data-path="${esc(e.path)}" title="复制文件夹链接">${ICON.external}</button>` : '')}</td>
       <td class="op">${isFile ? `<button class="btn sm icon" data-act="dlrow" data-path="${esc(e.path)}" title="下载">${ICON.download}</button>` : ''}</td>
       <td class="name"><span class="label"><span class="glyph ${ic.cls}">${ic.svg}</span><span class="txt">${esc(e.name)}</span>${badgesHtml(e)}</span></td>
       ${showActs ? `<td class="acts">${itemActionsHtml(e)}</td>` : ''}
@@ -439,16 +467,24 @@ function renderList() {
 }
 
 function renderGrid() {
+  // 非均匀图片墙：可预览图片 -> 大图瓦片(自适应高度)；其余 -> 小图标瓦片。
   const cards = state.entries.map((e) => {
     const ic = entryIcon(e);
     const isImg = !e.isDir && mediaType(e.name) === 'image';
-    const menu = `<button class="btn sm card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button>`;
-    return `<div class="card" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
-      ${e.isDir ? '' : `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>`}
-      <div class="thumb thumb-${isImg ? 'img' : ic.cls}"><span class="glyph ${ic.cls}">${ic.svg}</span>${isImg ? `<img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/>` : ''}</div>
+    const tileCls = isImg ? 'tile-lg' : 'tile-sm';
+    const ck = e.isDir ? '' : `<span class="card-ck"><input type="checkbox" class="ckbox" data-path="${esc(e.path)}" ${state.selected.has(e.path) ? 'checked' : ''}/></span>`;
+    const copyBtn = e.isDir
+      ? `<button class="btn sm icon card-copy" data-act="copydir" data-path="${esc(e.path)}" title="复制文件夹链接">${ICON.external}</button>`
+      : '';
+    const thumb = isImg
+      ? `<div class="thumb"><img class="lazy" data-path="${esc(e.path)}" alt="" loading="lazy"/></div>`
+      : `<div class="thumb"><span class="glyph ${ic.cls}">${ic.svg}</span></div>`;
+    return `<div class="card ${tileCls}" data-path="${esc(e.path)}" data-dir="${e.isDir ? 1 : 0}">
+      ${ck}
+      <div class="acts">${copyBtn}<button class="btn sm icon card-menu" data-act="menu" data-path="${esc(e.path)}" title="操作">${ICON.menu}</button></div>
+      ${thumb}
       <div class="name">${esc(e.name)}${badgesHtml(e)}</div>
       <div class="meta">${e.isDir ? '文件夹' : esc(fmtSize(e.size))}</div>
-      ${menu}
     </div>`;
   }).join('');
   return `<div class="grid">${cards}</div>`;
@@ -502,6 +538,7 @@ function bindItems(c) {
       else if (act === 'menu') entryMenu(entry);
       else if (act === 'copyrow') copyRowLink(path, entry.name, btn);
       else if (act === 'dlrow') downloadRow(path, entry.name, btn);
+      else if (act === 'copydir') copyFolderLink(path, btn);
       else if (act === 'actshead') headerMenu();
     };
   });
@@ -548,7 +585,8 @@ function entryMenu(entry) {
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">${opButtons}</div>`;
   const bd = openModal(m);
   if (!state.admin) {
-    m.querySelector('[data-op="copy"]').onclick = (e) => { const b = e.currentTarget; copyRowLink(entry.path, entry.name, b); setTimeout(() => closeModal(bd), 220); };
+    // 文件夹复制的是「进入该目录的浏览链接」(copyFolderLink)，文件才是 /api/raw 直链(copyRowLink)
+    m.querySelector('[data-op="copy"]').onclick = (e) => { const b = e.currentTarget; (entry.isDir ? copyFolderLink(entry.path, b) : copyRowLink(entry.path, entry.name, b)); setTimeout(() => closeModal(bd), 220); };
     m.querySelector('[data-op="dl"]').onclick = (e) => { const b = e.currentTarget; downloadRow(entry.path, entry.name, b); setTimeout(() => closeModal(bd), 220); };
     return;
   }
@@ -902,6 +940,14 @@ async function copyRowLink(path, name = '', el = null) {
 async function downloadRow(path, name = '', el = null) {
   try { triggerDownload(path, name); flash(el, true); }
   catch (e) { flash(el, false); alertModal('下载失败', e.message, 'danger'); }
+}
+// 复制文件夹链接：文件夹本身不可经 /api/raw 下载，其「链接」= 进入该目录的浏览页 URL
+// （?path=<enc>），可直接分享、粘贴到浏览器即打开该目录。点击按钮变色反馈同文件复制。
+async function copyFolderLink(path, el = null) {
+  const url = `${location.origin}/?path=${encodeURIComponent(path)}`;
+  const ok = await copyShareLink(url);
+  flash(el, ok);
+  if (!ok) alertModal('复制失败', '浏览器禁止复制，请手动复制链接', 'danger');
 }
 function updateBatchUI() {
   // 网格底部浮动条

@@ -268,27 +268,31 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .row .acts .fab-acts { opacity: 0.55; transition: opacity 0.12s; }
 .row:hover .acts .fab-acts { opacity: 1; }
 
-/* ---------------- 网格视图 ---------------- */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 16px; }
+/* ---------------- 网格视图（图片墙：非均匀瀑布流） ---------------- */
+/* 多列瀑布流：图片大图瓦片高度随比例自适应、其余小图标瓦片固定，形成非均匀墙。 */
+.grid { column-count: 5; column-gap: 14px; }
+@media (max-width: 1280px) { .grid { column-count: 4; } }
+@media (max-width: 960px)  { .grid { column-count: 3; } }
+@media (max-width: 620px)  { .grid { column-count: 2; } }
 .card {
+  break-inside: avoid; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 14px; cursor: pointer; position: relative;
+  padding: 12px; cursor: pointer; position: relative; min-width: 0;
   transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
-  display: flex; flex-direction: column; gap: 9px; min-width: 0;
 }
 .card:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-.card .thumb {
-  height: 92px; display: grid; place-items: center; font-size: 38px; color: var(--accent);
-  background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden;
-}
-.card .thumb img { width: 100%; height: 100%; object-fit: cover; }
 .card .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .meta { font-size: 12px; color: var(--text-dim); }
-.card .acts { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
+.card .acts { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; z-index: 3; }
+.card:hover .acts { opacity: 1; }
+/* 大图瓦片：高度随图片比例自适应 -> 非均匀瀑布流 */
+.card.tile-lg .thumb { height: auto; background: transparent; }
+.card.tile-lg .thumb img { width: 100%; height: auto; max-height: 280px; object-fit: cover; display: block; border-radius: var(--radius-sm); }
+/* 小图标瓦片：固定高度、类型图标居中 */
+.card.tile-sm .thumb { height: 84px; display: grid; place-items: center; font-size: 34px; color: var(--accent); background: var(--surface-2); border-radius: var(--radius-sm); overflow: hidden; }
 /* 点击反馈：复制/下载按钮短暂变色，替代「已复制」弹窗 */
 .flash-ok { background: var(--flash-ok) !important; color: #fff !important; border-color: var(--flash-ok) !important; }
 .flash-bad { background: var(--flash-bad) !important; color: #fff !important; border-color: var(--flash-bad) !important; }
-.card:hover .acts { opacity: 1; }
 
 /* 图标字形（SVG 用 inline-flex 保证垂直居中） */
 .glyph {
@@ -414,9 +418,8 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .pv-title .pv-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pv-title .pv-tools { display: flex; gap: 6px; flex: 0 0 auto; }
 
-/* 网格缩略图懒加载 */
-.card .thumb { position: relative; }
-.card .thumb img.lazy { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* 网格缩略图懒加载：大图瓦片用正常流(高度随比例自适应)，不再绝对定位铺满固定高度 */
+.card .thumb img.lazy { display: block; }
 
 /* 图片：缩放/旋转容器（flex 居中） */
 .image-container {

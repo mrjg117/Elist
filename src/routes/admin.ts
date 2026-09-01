@@ -255,11 +255,11 @@ export async function handleE5rnlTest(c: Context<{ Bindings: Env }>) {
   }
   try {
     const { runRenewalTest } = await import('../e5rnl');
-    const results = await runRenewalTest(c.env);
-    if (!results || results.length === 0) {
+    const result = await runRenewalTest(c.env);
+    if (!result || result.accounts.length === 0) {
       return c.json({ ok: false, message: '未找到任何 OneDrive 账号，无法测试' });
     }
-    return c.json({ ok: true, results });
+    return c.json({ ok: true, results: result.accounts, missingPermissions: result.missingPermissions });
   } catch (e: any) {
     return c.json({ ok: false, error: e.message || String(e) }, 500);
   }

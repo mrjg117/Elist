@@ -324,7 +324,8 @@ function renderDrives() {
   const home = `<button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/">${ICON.home}<span class="name">根目录</span></button>`;
   const items = state.drives.map((d) => {
     const active = state.path === d.path || state.path.startsWith(d.path + '/') ? 'active' : '';
-    return `<button class="drive ${active}" data-path="${esc(d.path)}">${ICON.drive}<span class="name">${esc(d.name)}</span></button>`;
+    // 与列表/网格一致：同步显示隐藏(👁)/加密(🔒)徽标（隐藏仅管理员可见，非管理员已被服务端过滤）
+    return `<button class="drive ${active}" data-path="${esc(d.path)}">${ICON.drive}<span class="name">${esc(d.name)}</span>${badgesHtml(d)}</button>`;
   }).join('');
   box.innerHTML = home + items;
   box.querySelectorAll('.drive').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
@@ -651,7 +652,9 @@ async function login() {
     if (data.success) {
       state.adminPw = pw; state.admin = true;
       sessionStorage.setItem('elist.adminPw', pw);
-      render();
+      // 登录后无感刷新：重新拉取侧栏与当前目录（带管理员态），仅更新显示，不整页 reload
+      await loadSidebar();
+      await browse(state.path, { fresh: true });
     }
   } catch (e) {
     if (e.message === '密码未设置') {
@@ -711,9 +714,17 @@ async function adminMenu() {
         const fails = item.results.filter((x) => !x.ok && !x.skipped);
         html += `<div class="e5-acc"><div class="e5-acc-h">${esc(item.key)} — ${ok}/${total} 成功</div>`;
         if (fails.length) {
-          html += '<div class="e5-fails">' + fails.map((f) => `${esc(f.action)}: ${esc(f.error || '')}`).join('<br/>') + '</div>';
+          html += '<div class="e5-fails">' + fails.map((f) => {
+            const label = f.requiresPermission ? `需授权 ${f.requiresPermission}` : (f.error || '失败');
+            return `<span class="e5-${f.requiresPermission ? 'perm' : 'err'}">${esc(f.action)}: ${esc(label)}</span>`;
+          }).join('<br/>') + '</div>';
         }
         html += '</div>';
+      }
+      // 缺失权限汇总（一次性授予即可让灰色项转绿）
+      if (r.missingPermissions && r.missingPermissions.length) {
+        html += `<div class="e5-perm-sum"><strong>需在 Entra ID 为应用授予并管理员同意以下 Graph 权限：</strong><br/>`
+          + r.missingPermissions.map((p) => `<code>${esc(p)}</code>`).join('、') + '</div>';
       }
       box.className = 'e5-result ok';
       box.innerHTML = html;
@@ -727,7 +738,8 @@ async function adminMenu() {
     closeModal(bd);
     state.admin = false; state.adminPw = '';
     sessionStorage.removeItem('elist.adminPw');
-    render();
+    // 登出后无感刷新：重新拉取侧栏与当前目录（已无管理员态，隐藏项被服务端过滤），仅更新显示
+    loadSidebar().then(() => browse(state.path, { fresh: true }));
   };
 }
 

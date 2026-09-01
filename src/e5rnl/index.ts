@@ -104,10 +104,16 @@ export async function handleScheduled(env: Env): Promise<void> {
  * 并对每个账号真实执行建/改/读/删续期文件（不是连通性 ping）。
  * 返回按账号汇总的每 action 结果，供管理员页展示是否全部 API 正常工作。
  */
-export async function runRenewalTest(env: Env): Promise<Array<{ key: string; results: any[] }>> {
+export interface RenewalTestResult {
+  accounts: Array<{ key: string; results: any[] }>;
+  /** 全部账号中因权限不足而失败所缺的 Graph 权限（去重汇总，便于一次性授予） */
+  missingPermissions: string[];
+}
+
+export async function runRenewalTest(env: Env): Promise<RenewalTestResult> {
   const mounts = getMounts(env);
   const accounts = extractOneDriveAccounts(mounts);
-  if (accounts.length === 0) return [];
+  if (accounts.length === 0) return { accounts: [], missingPermissions: [] };
 
   // 测试用调度参数：拉满预算、较大并发、稍长超时，确保真正把建/改/读/删都跑一遍
   const options = {
@@ -122,10 +128,12 @@ export async function runRenewalTest(env: Env): Promise<Array<{ key: string; res
   const resultsMap = await runRenewalForAccounts(accounts, getToken, options);
 
   const out: Array<{ key: string; results: any[] }> = [];
+  const missing = new Set<string>();
   for (const [key, results] of resultsMap.entries()) {
     out.push({ key, results });
+    for (const r of results) if (r.requiresPermission) missing.add(r.requiresPermission);
   }
-  return out;
+  return { accounts: out, missingPermissions: [...missing] };
 }
 
 /**

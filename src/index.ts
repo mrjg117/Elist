@@ -3,7 +3,7 @@ import type { Env } from './types';
 import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
-import { handleList, handleDownload, handleSearch, handleLink, handleConfigSave, handleConfigClear } from './routes/fs';
+import { handleList, handleDownload, handleSearch, handleLink, handleRaw, handleConfigSave, handleConfigClear } from './routes/fs';
 import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig, handleConfigStatus, handleE5rnlTest } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
@@ -26,6 +26,8 @@ app.get('/api/config', (c) => {
 
 app.get('/api/list', handleList);
 app.get('/api/link', handleLink);
+app.get('/api/raw', handleRaw);
+app.get('/api/raw/:name', handleRaw);
 app.get('/api/download', handleDownload);
 app.get('/api/search', handleSearch);
 app.post('/api/config/save', async (c) => {

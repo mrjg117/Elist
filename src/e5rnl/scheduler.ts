@@ -6,7 +6,7 @@
  * 非续期账号：只跑 list 刷缓存。
  */
 
-import { ALL_ACTIONS, type ActionDef } from './actions';
+import { ALL_ACTIONS, REQUIRED_SCOPES, type ActionDef } from './actions';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 
@@ -60,6 +60,8 @@ export interface RenewalResult {
   error?: string;
   skipped?: boolean;
   readonly: boolean;
+  /** 因 403 权限不足导致失败时，标注所缺 Graph 权限（便于管理员定位） */
+  requiresPermission?: string;
 }
 
 /**
@@ -166,6 +168,11 @@ export async function runRenewalForAccount(
       }
       if (action.allow404 && /-> 404:/.test(err.message)) {
         return { action: action.name, ok: true, msg: '无数据(404)', readonly: action.readonly };
+      }
+      // 403 权限不足：归类标注所缺 Graph 权限，而非笼统失败
+      if (/-> 403:/.test(err.message) || /InsufficientPrivileges/i.test(err.message) || /Access is denied/i.test(err.message)) {
+        const scope = REQUIRED_SCOPES[action.name] || '（见 Microsoft Graph 应用权限文档）';
+        return { action: action.name, ok: false, error: `缺少权限: ${scope}`, requiresPermission: scope, readonly: action.readonly };
       }
       return { action: action.name, ok: false, error: err.message, readonly: action.readonly };
     }

@@ -415,9 +415,77 @@ export async function handleLink(c: Context<{ Bindings: Env }>) {
     if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
   }
 
-  const url = await driver.link(rest);
+  // 返回经 Elist 的代理链接（/api/raw?path=），而非存储原生直链：
+  // 不暴露签名 URL、无过期、复用 Elist 门禁/隐藏；预览/复制/缩略图均走同源，免受上游 CORS 限制。
   const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
-  return c.json({ url, cacheControl: cc });
+  const base = new URL(c.req.url);
+  base.pathname = '/api/raw';
+  base.search = `?path=${encodeURIComponent(normalizedPath)}`;
+  return c.json({ url: base.toString(), cacheControl: cc });
+}
+
+/**
+ * GET /api/raw?path=/s3/photos/a.jpg[&download=1]
+ * 经 Elist 的代理下载/预览端点（同源、流式、支持 Range）。
+ * 与 /api/link 返回的本链接一一对应：浏览器预览/复制分享都走这里，
+ * 绝不跳转、不暴露存储签名直链、不受上游 CORS 限制。
+ * ?download=1 以 attachment 触发下载；否则 inline（预览/嵌入）。文件名经
+ * Content-Disposition 的 filename*=UTF-8'' 正确传递，故短链接也能正确命名下载文件。
+ */
+export async function handleRaw(c: Context<{ Bindings: Env }>) {
+  const path = c.req.query('path');
+  if (!path) return c.json({ error: 'path required' }, 400);
+  const normalizedPath = normalize(path);
+  const pws = collectPws(c);
+  const fresh = isFresh(c);
+
+  await loadXlsxConfig(c, fresh);
+
+  const { driver, rest, mount } = await dispatch(c.env, normalizedPath);
+  const readText = (full: string) => driver.readText(toRest(full, mount));
+
+  // 复用与 link/download 一致的门禁（文件级 + 父目录级密码；管理员免密）
+  const admin = await isAdminRequest(c);
+  if (!admin) {
+    const gate = await checkPathPassword(normalizedPath, pws, readText, fresh);
+    if (!gate.ok) return c.json({ error: 'password_required', lockedAt: gate.lockedAt, received: pws.length }, 403);
+  }
+
+  // 取存储原生直链（仅用于 worker 内回源，绝不吐给客户端）
+  const upstreamUrl = await driver.link(rest);
+  const cc = mount.cache || c.env.CACHE_CONTROL || 'public, max-age=300';
+
+  const reqHeaders = new Headers();
+  const range = c.req.header('Range');
+  if (range) reqHeaders.set('Range', range);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl, { headers: reqHeaders });
+  } catch (e) {
+    return c.json({ error: 'upstream_error', detail: String(e) }, 502);
+  }
+  // 上游非 2xx/206：原样透传状态码（404/403/416 等）
+  if (!upstream.ok && upstream.status !== 206) {
+    return new Response(await upstream.text().catch(() => ''), {
+      status: upstream.status,
+      headers: { 'Content-Type': upstream.headers.get('Content-Type') || 'text/plain' },
+    });
+  }
+
+  const out = new Headers();
+  const ct = upstream.headers.get('Content-Type'); if (ct) out.set('Content-Type', ct);
+  const cl = upstream.headers.get('Content-Length'); if (cl) out.set('Content-Length', cl);
+  const cr = upstream.headers.get('Content-Range'); if (cr) out.set('Content-Range', cr);
+  out.set('Cache-Control', cc);
+  out.set('Accept-Ranges', 'bytes');
+  const fname = basenameOf(normalizedPath);
+  const encName = encodeURIComponent(fname);
+  const disp = c.req.query('download') === '1' ? 'attachment' : 'inline';
+  out.set('Content-Disposition', `${disp}; filename="${encName}"; filename*=UTF-8''${encName}`);
+
+  // 流式回传（不落内存）：直接桥接上游 body
+  return new Response(upstream.body, { status: upstream.status, headers: out });
 }
 
 /**

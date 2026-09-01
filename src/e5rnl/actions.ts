@@ -310,3 +310,42 @@ export const READONLY: ActionDef[] = [
 ];
 
 export const ALL_ACTIONS = [...WRITABLE, ...READONLY];
+
+/**
+ * 每个动作所需的 Microsoft Graph Application 权限（需在 Entra ID 为应用授予并管理员同意）。
+ * 测试时若命中 403 InsufficientPrivileges，据此归类提示缺哪个权限，而非笼统报错。
+ */
+export const REQUIRED_SCOPES: Record<string, string> = {
+  onedrive: 'Files.ReadWrite.All',
+  onedrive_folder: 'Files.ReadWrite.All',
+  outlook: 'Mail.ReadWrite',
+  calendar_event: 'Calendars.ReadWrite',
+  calendar_calendar: 'Calendars.ReadWrite',
+  contacts: 'Contacts.ReadWrite',
+  todo_task: 'Tasks.ReadWrite',
+  todo_list: 'Tasks.ReadWrite',
+  sharepoint: 'Sites.ReadWrite.All',
+  teams: 'Team.ReadBasic.All',
+  teams_channels: 'Channel.ReadBasic.All',
+  mailbox: 'MailboxSettings.Read',
+  drive_root: 'Files.Read.All',
+  drive_list: 'Files.Read.All',
+  drive_root_dir: 'Files.Read.All',
+  mail_folders: 'Mail.Read',
+  mail_inbox: 'Mail.Read',
+  messages: 'Mail.Read',
+  mail_categories: 'Mail.Read',
+  calendar_view: 'Calendars.Read',
+  calendars: 'Calendars.Read',
+  events: 'Calendars.Read',
+  profile: 'User.Read.All',
+  manager: 'User.Read.All',
+  direct_reports: 'User.Read.All',
+  memberof: 'GroupMember.Read.All',
+  people: 'People.Read.All',
+  groups_all: 'Group.Read.All',
+  sharepoint_sites: 'Sites.Read.All',
+  sharepoint_site_lists: 'Sites.Read.All',
+  contacts_folders: 'Contacts.Read',
+  todo_lists_read: 'Tasks.Read',
+};

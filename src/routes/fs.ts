@@ -328,20 +328,25 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
   if (path === '/' || path === '') {
     const roots = getRoots(c.env);
     // 检查每个挂载根路径是否隐藏（从 xlsx 配置读取）
-    const visibleRoots = await Promise.all(
+    const rootsWithFlags = await Promise.all(
       roots.map(async (r) => {
         const hidden = await isHidden(normalize(r.path), undefined, fresh);
         const locked = !!(await xlsxConfig.getPassword(normalize(r.path)));
         return { root: r, hidden, locked };
       })
     );
-    const result = visibleRoots.map((v) => ({
+    // 过滤必须发生在「剥离 hidden 字段」之前，且基于 flags 判定：
+    // 若先构造结果对象再 filter，非管理员对象的 hidden 字段已被省略(undefined)，
+    // !undefined 恒为 true —— 隐藏的挂载盘会对访客继续可见。
+    const visible = admin ? rootsWithFlags : rootsWithFlags.filter((v) => !v.hidden);
+    const result = visible.map((v) => ({
       name: v.root.title || v.root.path,
       path: v.root.path,
       isDir: true,
-      ...(admin ? { hidden: v.hidden, locked: v.locked } : {}),
+      // hidden 标记绝不泄露给未授权访客；locked（加密）可安全展示 🔒，与子目录列表行为一致
+      ...(admin ? { hidden: v.hidden, locked: v.locked } : { locked: v.locked }),
     }));
-    return c.json(admin ? result : result.filter((v) => !v.hidden));
+    return c.json(result);
   }
 
   const { driver, rest, mount } = await dispatch(c.env, path);

@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import type { Env, Mount, Entry } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
-import { checkPathPassword, MARKER_FILES } from '../lib/acl';
+import { checkPathPassword, MARKER_FILES, filterHidden } from '../lib/acl';
 import { getMounts, findMount } from '../config';
 import { normalize } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
@@ -99,7 +99,9 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
     // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）
     const gate = await checkPathPassword(storagePath, collectPws(c), readText);
     if (!gate.ok) {
-      return c.body(null, 403, {
+      // 必须 401 + WWW-Authenticate: Basic 才会让浏览器 / WebDAV 客户端弹出原生登录框
+      // （403 或纯 JSON 不会触发浏览器对话框）。Basic 用户名/密码位都作为候选目录密码（见 collectPws）。
+      return c.body(null, 401, {
         'Content-Type': 'text/plain; charset=utf-8',
         'WWW-Authenticate': 'Basic realm="Elist"',
       });
@@ -107,8 +109,41 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   }
 
   if (method === 'GET' || method === 'HEAD') {
-    const url2 = await driver.link(rest);
-    return c.redirect(url2, 302);
+    // 先判断是否为目录：目录不能走 driver.link()（文件夹无下载直链，OneDrive 等驱动会抛错 -> 500）。
+    // 是目录 -> 渲染 HTML 索引；是文件 -> 302 到驱动直链（浏览器原生 Range 多线程，不落 Worker）。
+    let entries: Entry[] = [];
+    let isDir = false;
+    try {
+      entries = await driver.list(rest);
+      isDir = true;
+    } catch {
+      // 不是目录（或列目录失败），落到下方文件分支
+    }
+
+    if (isDir) {
+      const readText = (full: string) => driver.readText(toRest(full, mount));
+      const visible = await filterHidden(
+        storagePath,
+        entries.filter((e) => !MARKER_FILES.has(e.name)),
+        readText,
+        false,
+      );
+      if (method === 'HEAD') {
+        return c.body(null, 200, { 'Content-Type': 'text/html; charset=utf-8' });
+      }
+      return c.html(renderDirIndex(baseUrl, storagePath, visible), 200);
+    }
+
+    // 文件：302 到驱动直链。driver.link 失败时降级 404，避免裸抛 -> 500 internal_error。
+    try {
+      const url2 = await driver.link(rest);
+      if (method === 'HEAD') {
+        return c.body(null, 200, { 'Content-Type': 'application/octet-stream' });
+      }
+      return c.redirect(url2, 302);
+    } catch {
+      return c.body(null, 404);
+    }
   }
 
   if (method === 'PROPFIND') {
@@ -210,4 +245,44 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   }
 
   return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND, PUT, MKCOL, DELETE, MOVE' });
+}
+
+/**
+ * 渲染目录的 HTML 索引页（浏览器直接访问 WebDAV 文件夹时展示，而非 500 或裸 JSON）。
+ * 条目链接指向同挂载下的子路径（baseUrl 已含 /dav 前缀）。
+ */
+function renderDirIndex(baseUrl: string, path: string, entries: Entry[]): string {
+  const title = path === '/' ? 'WebDAV' : path.split('/').filter(Boolean).pop() || path;
+  const items = entries
+    .map((e) => {
+      const href = baseUrl + encodeURI(e.path);
+      const icon = e.isDir ? '📁' : '📄';
+      return `      <li><a href="${href}">${icon} ${escapeHtml(e.name)}</a></li>`;
+    })
+    .join('\n');
+  return (
+    '<!doctype html>\n' +
+    '<html lang="zh-CN">\n' +
+    '<head><meta charset="utf-8"><title>' +
+    escapeHtml(title) +
+    '</title>\n' +
+    '<style>body{font-family:system-ui,-apple-system,sans-serif;margin:2rem;color:#222}' +
+    'a{text-decoration:none;color:#1565c0}a:hover{text-decoration:underline}</style>\n' +
+    '</head>\n' +
+    '<body>\n' +
+    '<h1>' +
+    escapeHtml(title) +
+    '</h1>\n' +
+    '<ul>\n' +
+    items +
+    '\n</ul>\n' +
+    '</body>\n' +
+    '</html>'
+  );
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string),
+  );
 }

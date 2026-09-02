@@ -14,10 +14,14 @@ import { constantTimeCompare } from '../lib/acl';
  * WebDAV handler（挂载在 /dav/*）。
  * 支持：OPTIONS / PROPFIND / GET / HEAD / PUT / MKCOL / DELETE / MOVE。
  * GET/HEAD 直接 302 到驱动直链（浏览器/客户端原生 Range 多线程）。
- * 写操作需要管理员密码（X-Admin-Password 头或 Basic Auth 用户名）。
  *
- * 门禁：与网页端完全相同的 checkPathPassword 逻辑（级联 + 子层重新鉴权）。
- * 密码经 X-Folder-Password 请求头传递（可重复多个，与网页端同一套）。
+ * 权限模型（与网页端 /api/file/*、/api/list、/api/raw 一致）：
+ *  - 读（OPTIONS/GET/HEAD/PROPFIND）：走目录密码门禁 checkPathPassword（级联 + 子层重新鉴权）。
+ *  - 写（PUT/MKCOL/DELETE/MOVE）：只绑管理员登录（X-Admin-Password 头或 Basic Auth），
+ *    不再叠加目录密码 —— WebDAV 客户端只发 Basic 凭证，不会发 X-Folder-Password。
+ *
+ * 目录密码经 X-Folder-Password 请求头传递（可重复多个，与网页端同一套）；
+ * WebDAV 客户端的 Basic 用户名/密码位也会作为候选目录密码（见 collectPws）。
  */
 function parentDir(path: string): string {
   const i = path.lastIndexOf('/');
@@ -85,14 +89,21 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   const { driver, rest, mount } = await dispatch(c.env, storagePath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
-  // 门禁：与网页端同样逻辑（级联 + 子层重新鉴权）。
-  // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）。
-  const gate = await checkPathPassword(storagePath, collectPws(c), readText);
-  if (!gate.ok) {
-    return c.body(null, 403, {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'WWW-Authenticate': 'Basic realm="Elist"',
-    });
+  // 权限模型（与网页端 /api/file/* 一致）：
+  //  - 读（GET/HEAD/PROPFIND）：走目录密码门禁，级联 + 子层重新鉴权。
+  //  - 写（PUT/MKCOL/DELETE/MOVE）：只绑管理员登录（下方 Basic admin 校验），
+  //    不再叠加目录密码——WebDAV 客户端只发 Basic 凭证，不发 X-Folder-Password，
+  //    否则加密目录下无法上传/删除。
+  const WRITE_METHODS = ['PUT', 'MKCOL', 'DELETE', 'MOVE'];
+  if (!WRITE_METHODS.includes(method)) {
+    // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）
+    const gate = await checkPathPassword(storagePath, collectPws(c), readText);
+    if (!gate.ok) {
+      return c.body(null, 403, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'WWW-Authenticate': 'Basic realm="Elist"',
+      });
+    }
   }
 
   if (method === 'GET' || method === 'HEAD') {

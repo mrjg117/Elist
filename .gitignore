@@ -6,3 +6,10 @@ node_modules/
 dist/
 .DS_Store
 worker-env.d.ts
+
+# 本地调试产物与临时目录（探针脚本、测量结果等），不入库
+tmp/
+# git 目录备份，不入库
+.git.bak/
+# WorkBuddy 项目记忆，不入库
+.workbuddy/

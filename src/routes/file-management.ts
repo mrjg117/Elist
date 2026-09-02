@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { dispatch } from '../lib/dispatch';
-import { checkPathPassword } from '../lib/acl';
 import { getMounts } from '../config';
 import { requireAdmin } from '../lib/auth';
 import { loadXlsxConfig } from './fs';
@@ -9,8 +8,13 @@ import { loadXlsxConfig } from './fs';
 const app = new Hono<{ Bindings: Env }>();
 
 /**
- * 文件管理 API - 需要管理员权限
- * 所有操作都需要先验证管理员密码
+ * 文件管理 API - 只绑定管理员登录，不绑定目录密码。
+ *
+ * 权限模型（与 /api/list、/api/raw 保持一致）：
+ *  - 目录密码（X-Folder-Password）：只管「读」——访问/列出/下载加密内容。
+ *  - 管理员登录（X-Admin-Password / Basic admin）：管「写」——创建/删除/移动/写入。
+ * 已登录管理员在 handleList/handleRaw 中本就免目录密码，写操作同样不应再问一次目录密码，
+ * 否则加密目录下无法创建/删除（报错「需要目录密码」）。
  */
 
 // 写入文本文件
@@ -25,13 +29,6 @@ app.post('/write-text', async (c) => {
     const { path, content } = await c.req.json();
     if (!path || content === undefined) {
       return c.json({ error: '缺少 path 或 content 参数' }, 400);
-    }
-    
-    // 检查路径密码
-    const pws = c.req.header('X-Folder-Password')?.split(',') || [];
-    const gate = await checkPathPassword(path, pws);
-    if (!gate.ok) {
-      return c.json({ error: '需要目录密码', path: gate.lockedAt }, 403);
     }
     
     // 获取驱动并写入
@@ -60,13 +57,6 @@ app.post('/move', async (c) => {
     const { sourcePath, targetPath } = await c.req.json();
     if (!sourcePath || !targetPath) {
       return c.json({ error: '缺少 sourcePath 或 targetPath 参数' }, 400);
-    }
-    
-    // 检查源路径密码
-    const pws = c.req.header('X-Folder-Password')?.split(',') || [];
-    const gate = await checkPathPassword(sourcePath, pws);
-    if (!gate.ok) {
-      return c.json({ error: '需要目录密码', path: gate.lockedAt }, 403);
     }
     
     // 获取驱动并移动
@@ -112,13 +102,6 @@ app.post('/delete', async (c) => {
       return c.json({ error: '缺少 path 参数' }, 400);
     }
     
-    // 检查路径密码（trim 每个密码）
-    const pws = (c.req.header('X-Folder-Password')?.split(',') || []).map(p => p.trim()).filter(p => p);
-    const gate = await checkPathPassword(path, pws);
-    if (!gate.ok) {
-      return c.json({ error: '需要目录密码', path: gate.lockedAt }, 403);
-    }
-    
     // 获取驱动并删除
     const { driver, rest } = await dispatch(c.env, path);
     if (!driver.delete) {
@@ -145,13 +128,6 @@ app.post('/mkdir', async (c) => {
     const { path } = await c.req.json();
     if (!path) {
       return c.json({ error: '缺少 path 参数' }, 400);
-    }
-    
-    // 检查路径密码
-    const pws = c.req.header('X-Folder-Password')?.split(',') || [];
-    const gate = await checkPathPassword(path, pws);
-    if (!gate.ok) {
-      return c.json({ error: '需要目录密码', path: gate.lockedAt }, 403);
     }
     
     // 获取驱动并创建目录

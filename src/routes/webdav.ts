@@ -205,11 +205,12 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 
   if (method === 'PROPFIND') {
     const depth = c.req.header('Depth') || '1';
-    
+    const admin = await isWebdavAdmin(c);
+
     // 尝试列出目录内容
     let entries: Entry[] = [];
     let isDir = false;
-    
+
     try {
       entries = await driver.list(rest);
       isDir = true;
@@ -227,9 +228,10 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
         return c.body(null, 404);
       }
     }
-    
-    // 过滤隐藏条目和标记文件
-    const visible = entries.filter(e => !MARKER_FILES.has(e.name));
+
+    // 过滤标记文件；隐藏条目对非管理员过滤（与浏览器 GET 目录页一致，管理员可见全部）。
+    const allVisible = entries.filter(e => !MARKER_FILES.has(e.name));
+    const visible = admin ? allVisible : await filterHidden(storagePath, allVisible, readText, false);
 
     // Depth: 0 时目录只返回自身不列子项；文件始终返回自身（RFC 4918）。
     // buildPropfind 参数：(baseUrl, selfPath, entries, includeSelf, selfIsDir)

@@ -50,12 +50,18 @@ export async function checkPathPassword(
   fullPath: string,
   provided: string[],
   _readText?: ReadText,
-  _fresh = false
+  _fresh = false,
+  isAdmin = false
 ): Promise<{ ok: boolean; lockedAt?: string; required?: boolean }> {
   // 未加载时拒绝访问（安全：防止冷启动绕过）
   if (!xlsxConfig.isLoaded()) {
     return { ok: false, lockedAt: fullPath };
   }
+
+  // 管理员身份 bypass 所有目录密码门禁（与网页端 /api/* 一致）。
+  // 注意：isAdmin 仅在 admin_password 已校验通过（配置已加载）时才为 true，
+  // 故此处放行不会在「配置未加载」时意外泄露（失败安全仍由上方 isLoaded 守卫）。
+  if (isAdmin) return { ok: true, required: true };
 
   const segs = fullPath.split('/').filter(Boolean);
   let acc = '';
@@ -91,16 +97,18 @@ export async function isHidden(
   return xlsxConfig.isHidden(entryPath);
 }
 
-/** 过滤掉隐藏条目。 */
+/** 过滤掉隐藏条目。管理员（isAdmin）可见全部隐藏项。 */
 export async function filterHidden<T extends { name: string; path: string }>(
   _parentDir: string,
   entries: T[],
   _readText?: ReadText,
-  _fresh = false
+  _fresh = false,
+  isAdmin = false
 ): Promise<T[]> {
   if (!xlsxConfig.isLoaded()) {
     return []; // 失败安全：未加载时全部隐藏，绝不泄露隐藏项
   }
+  if (isAdmin) return entries; // 管理员可见全部隐藏项（与网页端 /api/* 一致）
   return entries.filter((e) => !xlsxConfig.isHidden(e.path));
 }
 

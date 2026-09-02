@@ -16,7 +16,8 @@ import { constantTimeCompare } from '../lib/acl';
  * GET/HEAD 直接 302 到驱动直链（浏览器/客户端原生 Range 多线程）。
  *
  * 权限模型（与网页端 /api/file/*、/api/list、/api/raw 一致）：
- *  - 读（OPTIONS/GET/HEAD/PROPFIND）：走目录密码门禁 checkPathPassword（级联 + 子层重新鉴权）。
+ *  - 读（OPTIONS/GET/HEAD/PROPFIND）：走目录密码门禁 checkPathPassword（级联 + 子层重新鉴权）；
+ *    管理员身份（X-Admin-Password 头或 Basic 用户名 admin）bypass 所有目录密码门禁与隐藏过滤。
  *  - 写（PUT/MKCOL/DELETE/MOVE）：只绑管理员登录（X-Admin-Password 头或 Basic Auth），
  *    不再叠加目录密码 —— WebDAV 客户端只发 Basic 凭证，不会发 X-Folder-Password。
  *
@@ -138,25 +139,31 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   // 确保配置已加载（防止冷启动绕过门禁）
   await loadXlsxConfig(c, false);
 
+  // 管理员身份（X-Admin-Password 头或 Basic 用户名 admin）：bypass 所有目录密码门禁与隐藏过滤。
+  // 与网页端 /api/* 的 isAdminRequest 同一套判定，实现「管理密码一用即全局管理身份」。
+  const admin = await isWebdavAdmin(c);
+
   const { driver, rest, mount } = await dispatch(c.env, storagePath);
   const readText = (full: string) => driver.readText(toRest(full, mount));
 
   // 权限模型（与网页端 /api/file/* 一致）：
-  //  - 读（GET/HEAD/PROPFIND）：走目录密码门禁，级联 + 子层重新鉴权。
+  //  - 读（GET/HEAD/PROPFIND）：走目录密码门禁，级联 + 子层重新鉴权；管理员身份 bypass。
   //  - 写（PUT/MKCOL/DELETE/MOVE）：只绑管理员登录（下方 Basic admin 校验），
   //    不再叠加目录密码——WebDAV 客户端只发 Basic 凭证，不发 X-Folder-Password，
   //    否则加密目录下无法上传/删除。
   const WRITE_METHODS = ['PUT', 'MKCOL', 'DELETE', 'MOVE'];
   if (!WRITE_METHODS.includes(method)) {
-    // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）
-    const gate = await checkPathPassword(storagePath, collectPws(c), readText);
-    if (!gate.ok) {
-      // 必须 401 + WWW-Authenticate: Basic 才会让浏览器 / WebDAV 客户端弹出原生登录框
-      // （403 或纯 JSON 不会触发浏览器对话框）。Basic 用户名/密码位都作为候选目录密码（见 collectPws）。
-      return c.body(null, 401, {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'WWW-Authenticate': 'Basic realm="Elist"',
-      });
+    if (!admin) {
+      // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）
+      const gate = await checkPathPassword(storagePath, collectPws(c), readText);
+      if (!gate.ok) {
+        // 必须 401 + WWW-Authenticate: Basic 才会让浏览器 / WebDAV 客户端弹出原生登录框
+        // （403 或纯 JSON 不会触发浏览器对话框）。Basic 用户名/密码位都作为候选目录密码（见 collectPws）。
+        return c.body(null, 401, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'WWW-Authenticate': 'Basic realm="Elist"',
+        });
+      }
     }
   }
 
@@ -179,11 +186,17 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
         entries.filter((e) => !MARKER_FILES.has(e.name)),
         readText,
         false,
+        admin,
       );
-      // 给目录条目补 locked 标记（用于浏览器视图显示 🔒 加密图标）；
+      // 给目录条目补 locked / hidden 标记（浏览器视图显示 🔒/👁 图标）；管理员可见隐藏项并显示 👁。
       // 文件无目录密码概念，保持不动。纯浏览器 HTML 展示，不影响 PROPFIND/客户端协议。
-      const enriched = visible.map((e) =>
-        e.isDir ? { ...e, locked: !!xlsxConfig.getPassword(normalize(e.path)) } : e,
+      const enriched = await Promise.all(
+        visible.map(async (e) => {
+          if (!e.isDir) return e;
+          const o: Entry = { ...e, locked: !!xlsxConfig.getPassword(normalize(e.path)) };
+          if (admin) o.hidden = await isHidden(normalize(e.path), undefined, false);
+          return o;
+        }),
       );
       if (method === 'HEAD') {
         return c.body(null, 200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -205,7 +218,6 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 
   if (method === 'PROPFIND') {
     const depth = c.req.header('Depth') || '1';
-    const admin = await isWebdavAdmin(c);
 
     // 尝试列出目录内容
     let entries: Entry[] = [];
@@ -336,7 +348,8 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[]): string
     .map((e) => {
       const href = baseUrl + encodeURI(e.path);
       let icon = e.isDir ? '📁' : '📄';
-      if (e.isDir && e.locked) icon = '🔒';
+      if (e.isDir && e.hidden) icon = '👁';
+      else if (e.isDir && e.locked) icon = '🔒';
       return `      <li><a href="${href}">${icon} ${escapeHtml(e.name)}</a></li>`;
     })
     .join('\n');

@@ -18,6 +18,8 @@ export interface Entry {
   size?: number;
   modified?: string; // ISO 时间字符串
   mime?: string;
+  locked?: boolean;   // 该目录是否设了访问密码（加密文件夹）
+  hidden?: boolean;   // 该条目是否被配置为隐藏（仅管理员可见）
 }
 
 /** 挂载点（目录）。 */

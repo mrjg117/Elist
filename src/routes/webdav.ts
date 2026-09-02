@@ -180,10 +180,15 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
         readText,
         false,
       );
+      // 给目录条目补 locked 标记（用于浏览器视图显示 🔒 加密图标）；
+      // 文件无目录密码概念，保持不动。纯浏览器 HTML 展示，不影响 PROPFIND/客户端协议。
+      const enriched = visible.map((e) =>
+        e.isDir ? { ...e, locked: !!xlsxConfig.getPassword(normalize(e.path)) } : e,
+      );
       if (method === 'HEAD') {
         return c.body(null, 200, { 'Content-Type': 'text/html; charset=utf-8' });
       }
-      return c.html(renderDirIndex(baseUrl, storagePath, visible), 200);
+      return c.html(renderDirIndex(baseUrl, storagePath, enriched), 200);
     }
 
     // 文件：302 到驱动直链。driver.link 失败时降级 404，避免裸抛 -> 500 internal_error。
@@ -328,7 +333,8 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[]): string
   const items = entries
     .map((e) => {
       const href = baseUrl + encodeURI(e.path);
-      const icon = e.isDir ? '📁' : '📄';
+      let icon = e.isDir ? '📁' : '📄';
+      if (e.isDir && e.locked) icon = '🔒';
       return `      <li><a href="${href}">${icon} ${escapeHtml(e.name)}</a></li>`;
     })
     .join('\n');

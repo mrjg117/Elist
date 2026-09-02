@@ -65,26 +65,43 @@ async function isAuthenticated(c: Context<{ Bindings: Env }>): Promise<boolean> 
 export async function handleLogin(c: Context<{ Bindings: Env }>) {
   // 确保配置已加载
   await loadXlsxConfig(c, false);
-  
-  const { password } = await c.req.json();
-  
+
+  // 同时支持 SPA 的 JSON 与 /dav 网页端登录框的表单提交（application/x-www-form-urlencoded）
+  const ct = (c.req.header('content-type') || '').toLowerCase();
+  let password: string | undefined;
+  if (ct.includes('application/json')) {
+    ({ password } = await c.req.json().catch(() => ({ password: undefined })));
+  } else {
+    const txt = await c.req.text().catch(() => '');
+    const m = txt.match(/(?:^|&)password=([^&]*)/);
+    password = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : c.req.query('password') ?? undefined;
+  }
+
   // 从 xlsx 配置获取管理员密码（ensureDefaultConfig 保证该键恒存在，空值即「未设置」）
   const adminPassword = xlsxConfig.getConfig('admin_password') || '';
   if (!adminPassword) {
     return c.json({ error: '密码未设置' }, 401);
   }
-  
-  if (!constantTimeCompare(password, adminPassword)) {
+
+  if (!constantTimeCompare(password || '', adminPassword)) {
     return c.json({ error: '密码错误' }, 401);
   }
-  
-  // 生成会话（generateSessionId 内部已注册到 sessions Map）
+
+  // 生成会话（generateSessionId 内部已注册到 sessions Map，供 SPA 兼容）
   const sessionId = generateSessionId();
-  
-  // 设置cookie（7天有效期）
+
   const maxAge = 7 * 24 * 60 * 60;
   c.header('Set-Cookie', `session=${sessionId}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict`);
-  
+  // 供 /dav 网页端携带管理身份：Workers 无内存态，elist_admin cookie 由服务端每次请求比对配置自校验
+  // （与 X-Admin-Password 头同一套判定，不依赖 isolate 内存；HttpOnly 防 XSS 读取）。
+  c.header('Set-Cookie', `elist_admin=${encodeURIComponent(adminPassword)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict`);
+
+  // 网页端登录框带 next 参数：登录后 302 回原目录页（一次性跳转，无需 JS）
+  const next = c.req.query('next');
+  if (next) {
+    return c.redirect(next, 302);
+  }
+
   return c.json({ success: true });
 }
 
@@ -94,8 +111,16 @@ export async function handleLogout(c: Context<{ Bindings: Env }>) {
   if (sessionId) {
     sessions.delete(sessionId);
   }
-  
+
   c.header('Set-Cookie', 'session=; Path=/; Max-Age=0');
+  c.header('Set-Cookie', 'elist_admin=; Path=/; Max-Age=0');
+
+  // 网页端退出带 next：跳回原目录页
+  const next = c.req.query('next');
+  if (next) {
+    return c.redirect(next, 302);
+  }
+
   return c.json({ success: true });
 }
 

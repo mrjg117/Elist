@@ -5,6 +5,13 @@ import { getMounts, normalize } from '../config';
 import { loadXlsxConfig, getConfigSaveTargets } from './fs';
 import { constantTimeCompare } from '../lib/acl';
 
+// 仅允许本站相对路径跳转，防止开放重定向与协议相对（//host）跳转。
+function sanitizeNext(next: string | undefined | null): string | null {
+  if (!next || typeof next !== 'string') return null;
+  if (!next.startsWith('/') || next.startsWith('//')) return null;
+  return next;
+}
+
 // 会话管理（内存存储，带过期时间）
 interface Session {
   id: string;
@@ -66,16 +73,23 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
   // 确保配置已加载
   await loadXlsxConfig(c, false);
 
-  // 同时支持 SPA 的 JSON 与 /dav 网页端登录框的表单提交（application/x-www-form-urlencoded）
+  // 同时支持 SPA 的 JSON 与 /dav 网页端登录框的表单提交（application/x-www-form-urlencoded）。
+  // next 可能来自表单体（POST 表单）或 URL query（退出链接 / 前端拼接），统一抽取。
   const ct = (c.req.header('content-type') || '').toLowerCase();
   let password: string | undefined;
+  let next: string | undefined;
   if (ct.includes('application/json')) {
-    ({ password } = await c.req.json().catch(() => ({ password: undefined })));
+    const j = (await c.req.json().catch(() => ({}))) as any;
+    password = j.password;
+    next = j.next;
   } else {
     const txt = await c.req.text().catch(() => '');
-    const m = txt.match(/(?:^|&)password=([^&]*)/);
-    password = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : c.req.query('password') ?? undefined;
+    const params = new URLSearchParams(txt);
+    password = params.get('password') ?? c.req.query('password') ?? undefined;
+    next = params.get('next') ?? undefined;
   }
+  // query 中的 next 兜底（退出链接走 query）
+  next = next || c.req.query('next') || undefined;
 
   // 从 xlsx 配置获取管理员密码（ensureDefaultConfig 保证该键恒存在，空值即「未设置」）
   const adminPassword = xlsxConfig.getConfig('admin_password') || '';
@@ -96,10 +110,11 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
   // （与 X-Admin-Password 头同一套判定，不依赖 isolate 内存；HttpOnly 防 XSS 读取）。
   c.header('Set-Cookie', `elist_admin=${encodeURIComponent(adminPassword)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict`);
 
-  // 网页端登录框带 next 参数：登录后 302 回原目录页（一次性跳转，无需 JS）
-  const next = c.req.query('next');
-  if (next) {
-    return c.redirect(next, 302);
+  // 网页端登录框带 next：登录后 302 回原目录页（一次性跳转，无需 JS）。
+  // SPA 登录不带 next，保持 JSON 响应由前端自行处理（含 sessionStorage 身份）。
+  const target = sanitizeNext(next);
+  if (target) {
+    return c.redirect(target, 302);
   }
 
   return c.json({ success: true });
@@ -115,10 +130,22 @@ export async function handleLogout(c: Context<{ Bindings: Env }>) {
   c.header('Set-Cookie', 'session=; Path=/; Max-Age=0');
   c.header('Set-Cookie', 'elist_admin=; Path=/; Max-Age=0');
 
-  // 网页端退出带 next：跳回原目录页
-  const next = c.req.query('next');
-  if (next) {
-    return c.redirect(next, 302);
+  // 网页端退出带 next（query 或表单体）：跳回原目录页；SPA 退出不带 next 则回 JSON 由前端处理。
+  const qNext = c.req.query('next');
+  let bNext: string | undefined;
+  if (!qNext) {
+    const ct = (c.req.header('content-type') || '').toLowerCase();
+    if (ct.includes('application/json')) {
+      const j = (await c.req.json().catch(() => ({}))) as any;
+      bNext = j.next;
+    } else if (ct.includes('application/x-www-form-urlencoded')) {
+      const params = new URLSearchParams(await c.req.text().catch(() => ''));
+      bNext = params.get('next') ?? undefined;
+    }
+  }
+  const target = sanitizeNext(qNext || bNext);
+  if (target) {
+    return c.redirect(target, 302);
   }
 
   return c.json({ success: true });

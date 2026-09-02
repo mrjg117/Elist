@@ -118,7 +118,7 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
       const gate = await checkPathPassword('/', collectPws(c));
       if (!gate.ok) {
         if (isBrowserHtml(c)) {
-          return c.html(renderAuthPage(baseUrl + '/'), 401);
+          return c.html(renderAuthPage('/dav/'), 401);
         }
         return c.body(null, 401, {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -177,7 +177,7 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
         // 浏览器 HTML 导航：渲染网页登录框（输入管理员密码即全局解锁），不发 Basic 挑战以免弹原生框。
         // WebDAV 客户端（PROPFIND/GET 带 */* 等 Accept、无登录框需求）：仍回 401 + Basic 挑战。
         if (isBrowserHtml(c)) {
-          return c.html(renderAuthPage(baseUrl + encodeURI(storagePath)), 401);
+          return c.html(renderAuthPage('/dav' + encodeURI(storagePath)), 401);
         }
         return c.body(null, 401, {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -347,7 +347,9 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[], admin: 
 
   // 管理员登录条：未登录显示登录框（POST 到 /api/admin/login 并带 next 回跳），已登录显示退出。
   // 仅浏览器 HTML 视图；与 X-Admin-Password 头 / Basic 是同一套管理身份，客户端协议层无感。
-  const curUrl = baseUrl + encodeURI(path);
+  // next 用同站相对路径（/dav/...）：handler 端 sanitizeNext 拒绝绝对 URL，避免开放重定向，
+  // 也避免退出后落在绝对 URL 上被当成跨站而失败。
+  const curUrl = '/dav' + encodeURI(path);
   let admBar: string;
   if (admin) {
     admBar =

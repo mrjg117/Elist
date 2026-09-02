@@ -831,6 +831,9 @@ async function adminMenu() {
     closeModal(bd);
     state.admin = false; state.adminPw = '';
     sessionStorage.removeItem('elist.adminPw');
+    // 同步清除服务端种的 elist_admin cookie，使 /dav 网页视图的管理身份与本站登录态保持一致
+    // （该 cookie 是 /dav 继承网页登录态的载体；不清则 /dav 仍显示管理员）。
+    apiSend('/api/admin/logout', {}).catch(() => {});
     // 登出后无感刷新：重新拉取侧栏与当前目录（已无管理员态，隐藏项被服务端过滤），仅更新显示
     loadSidebar().then(() => browse(state.path, { fresh: true }));
   };

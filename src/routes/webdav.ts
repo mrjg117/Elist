@@ -71,12 +71,6 @@ function getCookie(c: Context<{ Bindings: Env }>, name: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/** 浏览器 HTML 导航（非 WebDAV 客户端）：用于决定是否渲染网页登录框而非发 Basic 挑战。 */
-function isBrowserHtml(c: Context<{ Bindings: Env }>): boolean {
-  const accept = c.req.header('Accept') || '';
-  return accept.includes('text/html') && !c.req.header('Authorization');
-}
-
 /** WebDAV 根聚合与管理视图用的管理员判定：X-Admin-Password 头、Basic 用户名 admin、或 elist_admin cookie（网页端登录后）。 */
 async function isWebdavAdmin(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const headerPw = c.req.header('X-Admin-Password');
@@ -113,13 +107,12 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   if (storagePath === '/') {
     await loadXlsxConfig(c, false);
     const admin = await isWebdavAdmin(c);
-    // 根本身若有目录密码则先过读门禁（与子目录一致）
+    // 根本身若有目录密码则先过读门禁（与子目录一致）。
+    // 浏览器与 WebDAV 客户端统一回 401 + Basic 原生弹框；管理员身份（elist_admin cookie / Basic admin）
+    // 由 isWebdavAdmin 在上方已短路放行，故受保护目录对「已登录 SPA 的 /dav」自动继承解锁。
     if (!admin) {
       const gate = await checkPathPassword('/', collectPws(c));
       if (!gate.ok) {
-        if (isBrowserHtml(c)) {
-          return c.html(renderAuthPage('/dav/'), 401);
-        }
         return c.body(null, 401, {
           'Content-Type': 'text/plain; charset=utf-8',
           'WWW-Authenticate': 'Basic realm="Elist"',
@@ -174,11 +167,8 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
       // 对文件/目录都沿完整路径逐级校验（文件的门禁在其所在目录）
       const gate = await checkPathPassword(storagePath, collectPws(c), readText);
       if (!gate.ok) {
-        // 浏览器 HTML 导航：渲染网页登录框（输入管理员密码即全局解锁），不发 Basic 挑战以免弹原生框。
-        // WebDAV 客户端（PROPFIND/GET 带 */* 等 Accept、无登录框需求）：仍回 401 + Basic 挑战。
-        if (isBrowserHtml(c)) {
-          return c.html(renderAuthPage('/dav' + encodeURI(storagePath)), 401);
-        }
+        // 浏览器与 WebDAV 客户端统一回 401 + Basic 原生弹框；已登录 SPA 的 elist_admin cookie
+        // 经 isWebdavAdmin 已在上方面短路放行，受保护目录自动继承解锁，无需 /dav 自绘登录页。
         return c.body(null, 401, {
           'Content-Type': 'text/plain; charset=utf-8',
           'WWW-Authenticate': 'Basic realm="Elist"',
@@ -345,23 +335,9 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 function renderDirIndex(baseUrl: string, path: string, entries: Entry[], admin: boolean): string {
   const title = path === '/' ? 'WebDAV' : path.split('/').filter(Boolean).pop() || path;
 
-  // 管理员登录条：未登录显示登录框（POST 到 /api/admin/login 并带 next 回跳），已登录显示退出。
-  // 仅浏览器 HTML 视图；与 X-Admin-Password 头 / Basic 是同一套管理身份，客户端协议层无感。
-  // next 用同站相对路径（/dav/...）：handler 端 sanitizeNext 拒绝绝对 URL，避免开放重定向，
-  // 也避免退出后落在绝对 URL 上被当成跨站而失败。
-  const curUrl = '/dav' + encodeURI(path);
-  let admBar: string;
-  if (admin) {
-    admBar =
-      `      <p class="adm">✓ 管理员已登录 · ` +
-      `<a href="/api/admin/logout?next=${escapeHtml(curUrl)}">退出</a></p>\n`;
-  } else {
-    admBar =
-      `      <form class="adm" method="post" action="/api/admin/login">` +
-      `<input type="hidden" name="next" value="${escapeHtml(curUrl)}">` +
-      `<input type="password" name="password" placeholder="管理员密码" size="14">` +
-      `<button type="submit">登录</button></form>\n`;
-  }
+  // 说明：/dav 不自带登录 UI。管理员身份继承网页（SPA）登录态——
+  // SPA 登录调用 /api/admin/login 会种 elist_admin cookie，isWebdavAdmin 认它，/dav 自动解锁；
+  // 直接访问 /dav 的游客在受保护目录会收到 401 + Basic 原生弹框（与 WebDAV 客户端一致）。
 
   // 导航：返回上级（根目录不显示）+ 面包屑路径（与 WebDAV 客户端无关，纯浏览器视图）
   let nav = '';
@@ -399,10 +375,6 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[], admin: 
     '</title>\n' +
     '<style>body{font-family:system-ui,-apple-system,sans-serif;margin:2rem;color:#222}' +
     'a{text-decoration:none;color:#1565c0}a:hover{text-decoration:underline}' +
-    '.adm{background:#f4f6fb;border:1px solid #d8e0f0;border-radius:8px;padding:.5rem .8rem;' +
-    'margin:0 0 1rem;display:flex;gap:.5rem;align-items:center;font-size:.9rem;width:max-content}' +
-    '.adm input[type=password]{padding:.25rem .4rem;border:1px solid #c4ccda;border-radius:4px}' +
-    '.adm button{padding:.25rem .8rem;border:0;border-radius:4px;background:#1565c0;color:#fff;cursor:pointer}' +
     '.up{margin:0 0 .5rem}.up a{font-weight:600}' +
     '.crumb{color:#666;font-size:.9rem;margin:0 0 1rem}.crumb a{color:#1565c0}</style>\n' +
     '</head>\n' +
@@ -410,36 +382,12 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[], admin: 
     '<h1>' +
     escapeHtml(title) +
     '</h1>\n' +
-    admBar +
     nav +
     '<ul>\n' +
     items +
     '\n</ul>\n' +
     '</body>\n' +
     '</html>'
-  );
-}
-
-/** 加密/隐藏目录被拦截时，给浏览器导航渲染的登录页（输入管理员密码即全局解锁）。 */
-function renderAuthPage(nextUrl: string): string {
-  return (
-    '<!doctype html>\n' +
-    '<html lang="zh-CN">\n' +
-    '<head><meta charset="utf-8"><title>需要管理员密码</title>\n' +
-    '<style>body{font-family:system-ui,-apple-system,sans-serif;margin:2rem;color:#222}' +
-    '.box{background:#f4f6fb;border:1px solid #d8e0f0;border-radius:8px;padding:1rem;width:max-content}' +
-    'input[type=password]{padding:.3rem .5rem;border:1px solid #c4ccda;border-radius:4px;margin-right:.5rem}' +
-    'button{padding:.3rem 1rem;border:0;border-radius:4px;background:#1565c0;color:#fff;cursor:pointer}' +
-    'a{color:#1565c0}</style></head>\n' +
-    '<body>\n' +
-    '<h1>需要管理员密码</h1>\n' +
-    '<div class="box"><form method="post" action="/api/admin/login">' +
-    `<input type="hidden" name="next" value="${escapeHtml(nextUrl)}">` +
-    '<input type="password" name="password" placeholder="管理员密码" required>' +
-    '<button type="submit">登录</button></form></div>\n' +
-    '<p>输入管理员密码后，本目录及全部隐藏 / 加密目录将解锁。</p>\n' +
-    '<p><a href="/dav/">← 返回根目录</a></p>\n' +
-    '</body>\n</html>'
   );
 }
 

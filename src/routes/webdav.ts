@@ -2,8 +2,8 @@ import type { Context } from 'hono';
 import type { Env, Mount, Entry } from '../types';
 import { dispatch } from '../lib/dispatch';
 import { buildPropfind } from '../lib/xml';
-import { checkPathPassword, MARKER_FILES, filterHidden } from '../lib/acl';
-import { getMounts, findMount } from '../config';
+import { checkPathPassword, MARKER_FILES, filterHidden, isHidden } from '../lib/acl';
+import { getMounts, findMount, getRoots } from '../config';
 import { normalize } from '../config';
 import * as xlsxConfig from '../lib/xlsx-config';
 import { loadXlsxConfig } from './fs';
@@ -63,6 +63,16 @@ function collectPws(c: Context<{ Bindings: Env }>): string[] {
   return out;
 }
 
+/** WebDAV 根聚合与管理视图用的管理员判定：X-Admin-Password 头或 Basic 用户名 admin。 */
+async function isWebdavAdmin(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  const headerPw = c.req.header('X-Admin-Password');
+  const basicPw = extractAdminPassword(c) ?? undefined;
+  const pw = headerPw || basicPw;
+  if (!pw) return false;
+  const expected = xlsxConfig.getConfig('admin_password');
+  return !!expected && constantTimeCompare(pw, expected);
+}
+
 export async function webdavHandler(c: Context<{ Bindings: Env }>) {
   const url = new URL(c.req.url);
   const storagePath = normalize(decodeURIComponent(url.pathname.replace(/^\/dav/, '')) || '/');
@@ -81,6 +91,48 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
       DAV: '1, 2',
       'MS-Author-Via': 'DAV',
     });
+  }
+
+  // 根聚合：/dav 与 /dav/ 返回所有挂载点列表（与网页端 /api/list 根一致）。
+  // 否则 dispatch 会因没有挂载点注册在 "/" 而 404 mount not found，浏览器/客户端连根就报 404。
+  if (storagePath === '/') {
+    await loadXlsxConfig(c, false);
+    const admin = await isWebdavAdmin(c);
+    // 根本身若有目录密码则先过读门禁（与子目录一致）
+    if (!admin) {
+      const gate = await checkPathPassword('/', collectPws(c));
+      if (!gate.ok) {
+        return c.body(null, 401, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'WWW-Authenticate': 'Basic realm="Elist"',
+        });
+      }
+    }
+    const roots = getRoots(c.env);
+    const entries: Entry[] = [];
+    for (const r of roots) {
+      const hidden = await isHidden(normalize(r.path), undefined, false);
+      if (!admin && hidden) continue;
+      const locked = !!(await xlsxConfig.getPassword(normalize(r.path)));
+      entries.push({
+        name: r.title || r.path,
+        path: r.path,
+        isDir: true,
+        ...(admin ? { hidden, locked } : { locked }),
+      } as Entry);
+    }
+    if (method === 'PROPFIND') {
+      const xml = buildPropfind(baseUrl, '/', entries, true, true);
+      return c.body(xml, 207, { 'Content-Type': 'application/xml; charset=utf-8' });
+    }
+    if (method === 'GET' || method === 'HEAD') {
+      if (method === 'HEAD') {
+        return c.body(null, 200, { 'Content-Type': 'text/html; charset=utf-8' });
+      }
+      return c.html(renderDirIndex(baseUrl, '/', entries), 200);
+    }
+    // 根不接受写方法（没有挂载点落在 "/"）
+    return c.body(null, 405, { Allow: 'OPTIONS, GET, HEAD, PROPFIND' });
   }
 
   // 确保配置已加载（防止冷启动绕过门禁）

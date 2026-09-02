@@ -305,6 +305,26 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
  */
 function renderDirIndex(baseUrl: string, path: string, entries: Entry[]): string {
   const title = path === '/' ? 'WebDAV' : path.split('/').filter(Boolean).pop() || path;
+
+  // 导航：返回上级（根目录不显示）+ 面包屑路径（与 WebDAV 客户端无关，纯浏览器视图）
+  let nav = '';
+  if (path !== '/') {
+    const parent = path.slice(0, path.lastIndexOf('/')) || '/';
+    const upHref = baseUrl + encodeURI(parent);
+    nav += `      <p class="up"><a href="${upHref}">↩ 返回上级</a></p>\n`;
+  }
+  const segs = path.split('/').filter(Boolean);
+  if (segs.length > 0) {
+    let acc = '';
+    const parts = segs.map((seg, i) => {
+      acc += '/' + seg;
+      const href = baseUrl + encodeURI(acc);
+      // 当前目录（最后一段）不链接，其余是可点祖先
+      return i < segs.length - 1 ? `<a href="${href}">${escapeHtml(seg)}</a>` : escapeHtml(seg);
+    });
+    nav += `      <p class="crumb"><a href="${baseUrl + '/'}">根</a> / ${parts.join(' / ')}</p>\n`;
+  }
+
   const items = entries
     .map((e) => {
       const href = baseUrl + encodeURI(e.path);
@@ -319,12 +339,15 @@ function renderDirIndex(baseUrl: string, path: string, entries: Entry[]): string
     escapeHtml(title) +
     '</title>\n' +
     '<style>body{font-family:system-ui,-apple-system,sans-serif;margin:2rem;color:#222}' +
-    'a{text-decoration:none;color:#1565c0}a:hover{text-decoration:underline}</style>\n' +
+    'a{text-decoration:none;color:#1565c0}a:hover{text-decoration:underline}' +
+    '.up{margin:0 0 .5rem}.up a{font-weight:600}' +
+    '.crumb{color:#666;font-size:.9rem;margin:0 0 1rem}.crumb a{color:#1565c0}</style>\n' +
     '</head>\n' +
     '<body>\n' +
     '<h1>' +
     escapeHtml(title) +
     '</h1>\n' +
+    nav +
     '<ul>\n' +
     items +
     '\n</ul>\n' +

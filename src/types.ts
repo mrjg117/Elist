@@ -35,6 +35,15 @@ export interface MountPoint {
 export interface UserMount {
   user_id?: string;   // 用户标识（OneDrive 组织租户用，S3 可忽略）
   mounts: MountPoint[];
+  // —— SharePoint 源块（与 user_id 互斥）：site_id 顶层 + drives[] 分组（每库一个 drive_id + mounts）——
+  site_id?: string;   // SharePoint 站点 ID；空串 = 根站点。值空串也要写出键（不省略键）
+  drives?: DriveGroup[]; // 文档库分组；每个元素 = 一个文档库（drive_id 可空=默认库）+ 其下多文件夹
+}
+
+/** SharePoint 文档库分组：一个 drive_id 管一组文件夹。 */
+export interface DriveGroup {
+  drive_id?: string;  // 文档库(drive) ID；空串 = 该站点默认文档库。值空串也要写出键
+  mounts: MountPoint[];
 }
 
 /** 账号机密（AUTH_<NAME> 的值）：type + 凭据字段。 */
@@ -70,6 +79,8 @@ export interface Mount {
   cache?: string;     // 覆盖全局缓存
   e5rnl?: boolean;    // 是否参与 E5 续期
   user_id?: string;   // 用户标识（OneDrive 组织租户用）
+  site_id?: string;   // SharePoint 站点 ID（空串=根站点）；仅 sharepoint 驱动用
+  drive_id?: string;  // SharePoint 文档库 ID（空串=默认库）；仅 sharepoint 驱动用
   addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）
 }
 

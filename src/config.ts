@@ -54,6 +54,30 @@ export function getMounts(env: Env): Mount[] {
 
     // 遍历 users 数组，展开所有挂载点
     for (const user of mountConfig.users || []) {
+      // SharePoint 源块：带 site_id（与 user_id 互斥），drives[] 分组下放 mounts
+      const spSiteId = (user as any).site_id;
+      const spDrives = (user as any).drives;
+      if (spSiteId !== undefined || spDrives) {
+        const siteId = spSiteId || ''; // 空串 = 根站点
+        for (const grp of spDrives || []) {
+          const driveId = (grp && (grp as any).drive_id) || ''; // 空串 = 默认库
+          for (const mp of (grp && (grp as any).mounts) || []) {
+            mounts.push({
+              mount: normalize(mp.path || '/'),
+              root: normalize(mp.root || '/'),
+              driver: 'sharepoint', // 显式指定，不继承 auth.type（同一 AUTH_XXX 可能是 onedrive）
+              title: mp.title,
+              cache: mp.cache,
+              e5rnl: !!mp.e5rnl,
+              site_id: siteId,
+              drive_id: driveId,
+              addition,
+            });
+          }
+        }
+        continue;
+      }
+      // 原有 OneDrive / S3 分支（不变）
       for (const mp of user.mounts || []) {
         mounts.push({
           mount: normalize(mp.path || '/'),

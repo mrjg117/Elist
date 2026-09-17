@@ -21,5 +21,5 @@ export function getDriverClass(name: string): (new () => Driver) | null {
   return registry.get(name) || null;
 }
 
-// 内置驱动（与 s3.ts / onedrive.ts 配套，在 index 启动时注册）
-export const DRIVERS = ['s3', 'onedrive'] as const;
+// 内置驱动（与 s3.ts / onedrive.ts / sharepoint.ts 配套，在 index 启动时注册）
+export const DRIVERS = ['s3', 'onedrive', 'sharepoint'] as const;

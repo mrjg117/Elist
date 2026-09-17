@@ -3,6 +3,7 @@ import type { Env } from './types';
 import { registerDriver } from './drivers/registry';
 import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
+import { SharePointDriver } from './drivers/sharepoint';
 import { handleList, handleSearch, handleRaw, handleConfigSave, handleConfigClear } from './routes/fs';
 import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig, handleConfigStatus, handleE5rnlTest } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
@@ -14,6 +15,7 @@ import fileManagementApp from './routes/file-management';
 // onedrive = 组织租户证书 app-only（全球版）；s3 = S3 兼容（R2/OSS/COS/MinIO 靠 endpoint 区分）。
 registerDriver('s3', S3Driver);
 registerDriver('onedrive', OneDriveDriver);
+registerDriver('sharepoint', SharePointDriver);
 
 const app = new Hono<{ Bindings: Env }>();
 

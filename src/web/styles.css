@@ -1,6 +1,6 @@
 /* Elist 样式 —— 简洁网盘风，浅/深双主题，零运行时 */
 :root {
-  --bg: #f4f7fb;
+  --bg: #e7edf7;
   --bg-elev: #ffffff;
   --glow: #e8f0ff;
   --side-bg: #fafbfd;
@@ -38,7 +38,8 @@
   --t1: #3b82f6; --t2: #0d9488; --t3: #7c3aed; --t4: #d97706;
   --t5: #e11d48; --t6: #16a34a; --t7: #4f46e5; --t8: #0891b2;
   --shadow: 0 18px 50px rgba(31, 58, 110, 0.10);
-  --shadow-sm: 0 4px 14px rgba(31, 58, 110, 0.08);
+  --shadow-sm: 0 4px 14px rgba(31, 58, 110, 0.12);
+  --shadow-hover: 0 12px 30px rgba(31, 58, 110, 0.18);
   --radius: 12px;
   --radius-sm: 8px;
   --sidebar-w: 214px;
@@ -47,7 +48,7 @@
 }
 
 [data-theme="dark"] {
-  --bg: #0f1420;
+  --bg: #080c14;
   --bg-elev: #171d2a;
   --glow: #1a2a4a;
   --side-bg: #121824;
@@ -85,7 +86,8 @@
   --t1: #5b9dff; --t2: #2dd4bf; --t3: #a78bfa; --t4: #fbbf24;
   --t5: #fb7185; --t6: #34d399; --t7: #818cf8; --t8: #22d3ee;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.30);
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.34);
+  --shadow-hover: 0 12px 30px rgba(0, 0, 0, 0.55);
 }
 
 * { box-sizing: border-box; }
@@ -98,9 +100,9 @@ body {
 .boot { display: grid; place-items: center; height: 100vh; color: var(--text-dim); }
 /* 主题切换瞬间关掉过渡，避免颜色渐变闪烁（toggleTheme 里短暂加 no-trans） */
 html.no-trans *, html.no-trans *::before, html.no-trans *::after { transition: none !important; }
-#app { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 8px; overflow: hidden; }
+#app { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 16px; overflow: hidden; }
 .layout {
-  display: flex; width: 100%; max-width: none; height: calc(100vh - 16px);
+  display: flex; width: 100%; max-width: none; height: calc(100vh - 32px);
   min-height: 0; background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 14px; overflow: hidden; box-shadow: var(--shadow);
 }
@@ -264,14 +266,15 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
 .row:hover .acts .fab-acts { opacity: 1; }
 
 /* 网格视图 */
-.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
 .card {
   display: flex; flex-direction: column; gap: 6px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
+  box-shadow: var(--shadow-sm);
   cursor: pointer; position: relative; min-width: 0;
-  transition: border-color 0.15s, transform 0.15s;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
-.card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.card:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-hover); }
 .card .thumb { height: 120px; border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-2); display: grid; place-items: center; }
 .card .thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .card .thumb-ico .glyph { width: 46px; height: 46px; }
@@ -551,8 +554,8 @@ select.input:focus, input.input:focus { border-color: var(--accent); }
   .list td.op:nth-of-type(3) { grid-area: op2; }
   .list td.acts { grid-area: acts; text-align: right; }
   .list td.size, .list td.mod { display: none; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-  .card { padding: 10px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+  .card { padding: 14px; }
   .card .thumb { height: 100px; }
   .modal { padding: 16px; }
   .fileinfo-grid { grid-template-columns: 76px 1fr; }

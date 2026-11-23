@@ -61,7 +61,8 @@ export function getMounts(env: Env): Mount[] {
           mount: normalize(mp.path || '/'),
           root: normalize(mp.root || '/'),
           driver: isSP ? 'sharepoint' : auth.type,
-          title: mp.title,
+          // 默认显示名取 path 原值（trim 空格、去前导 /，不解析路径）；要带 / 就自己写 title
+          title: mp.title || (mp.path || '').trim().replace(/^\/+/, '') || '/',
           cache: mp.cache,
           user_id: user.user_id,
           tenant: name,

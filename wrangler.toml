@@ -2,73 +2,26 @@ name = "elist"
 main = "./src/index.ts"
 compatibility_date = "2025-04-04"
 compatibility_flags = ["nodejs_compat"]
-# 部署/自动部署时保留配置外的既有变量与密钥（如 Dashboard 里设的 AUTH_* secret），
-# 防止 Git 集成每次 push 自动部署把手工设的密钥清掉。
-keep_vars = true
+keep_vars = true  # deploy 保留 Dashboard 手工设的变量/密钥，不被仓库配置覆盖
 
-# 静态前端（SPA）由 Workers Assets 托管，边缘就近返回，毫秒级。
-# /api/* 与 /dav/* 不命中静态文件，自动交由 Worker 脚本处理。
+# 静态前端托管
 [assets]
-directory = "./src/web"
-# 显式绑定 ASSETS：run_worker_first=true 时 Worker 需通过 c.env.ASSETS 取静态资源，
-# 不声明 binding 则 ASSETS 不注入 → SPA 兜底路由 c.env.ASSETS.fetch 抛 500（整站起不来）。
-binding = "ASSETS"
-html_handling = "auto-trailing-slash"
-not_found_handling = "single-page-application"
-# Worker 先于静态资源接管所有请求：否则带扩展名的 /api/raw/<文件名> 会被静态资源层
-# 误判为静态文件、找不到后按 SPA 兜底返回 index.html（表现为点击复制链接跳主页）。
-# 设为 true 后，/api/* 与 /dav/* 始终进 Worker；其余请求由 worker 末行兜底经 ASSETS 提供前端。
-run_worker_first = true
+directory = "./src/web"                          # 前端文件目录（必需）
+binding = "ASSETS"                               # Worker 用 c.env.ASSETS 取静态资源（必需）
+not_found_handling = "single-page-application"   # 未知路径回退 index.html，SPA 路由（必需）
+run_worker_first = true                          # Worker 优先，避免 /api/raw/x.jpg 被当静态文件拦掉
 
-# =====================================================================
-# 配置方案（v4，变量拆分）：
-#   - AUTH_<NAME>：账号机密（type、凭据等）
-#   - MOUNT_<NAME>：挂载配置（单对象 / 用户数组 / {users:[...]} 三种写法等价）
-#   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
-#   - 一份 AUTH 可挂多个用户：MOUNT 里写数组，每个用户一个 user_id + mounts
-#
-# AUTH_<NAME> 示例（OneDrive，租户级凭据，一份即可）：
-#   {"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_thumbprint":"<base64url x5t>","cert_key":"..."}
-#
-# MOUNT_<NAME> 示例（单用户，对象写法）：
-#   {"user_id":"user@org.com","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
-# MOUNT_<NAME> 示例（多用户同租户，数组写法，共用一份 AUTH）：
-#   [{"user_id":"a@org.com","mounts":[{"path":"/a","root":"/","title":"A"}]},
-#    {"user_id":"b@org.com","mounts":[{"path":"/b","root":"/","title":"B"}]}]
-# SP 挂根站点：某用户的 user_id 写 "sharepoint"，mounts 同上
-# 注意 fields 是 title，不是 name；path/root 不要带前后空格
-#
-# 密码/隐藏配置：统一存放在存储根目录的 .elist.xlsx 文件中
-#   - passwords sheet：路径密码配置
-#   - hidden sheet：隐藏目录列表
-#   - config sheet：全局配置（如 admin_password）
-#
-# 环境变量：
-#   - CONF_PW：xlsx 配置文件加密密码（可选）
-#   - CONFIG_AUTH：指定配置文件存储账号（可选，如 AUTH_ZHU 则写 ZHU）
-#   - CONFIG_PATH：配置文件存储路径（可选，默认 /）
-# =====================================================================
-
-# =====================================================================
-# 变量策略：仓库只放【示例】，真实值一律在 Cloudflare Dashboard 配置。
-#
-# 文件顶部的 keep_vars = true 保证 wrangler deploy 时保留 Dashboard 里
-# 已有的变量，不会被这份配置清掉。所以下面这些示例【全部保持注释】。
-# 关键：一旦取消注释并填了值，deploy 会用这里的值【覆盖】Dashboard 同名
-# 变量——想让后台说了算，就别在 [vars] 里写真实值或占位值。
-#
-# Dashboard 里要配的变量（格式示例，仅作参考）：
-#   SITE_TITLE   = "Elist"
-#   CACHE_CONTROL = "public, max-age=0, must-revalidate"
-#   AUTH_<NAME>  = {"type":"onedrive","tenant_id":"...","client_id":"...",...}  （Secret）
-#   MOUNT_<NAME> = {"user_id":"...","mounts":[{"path":"/","root":"/","title":"..."}]}
-#   CONF_PW / CONFIG_AUTH / CONFIG_PATH 按需
-# =====================================================================
+# 变量：真实值在 Dashboard 配；下面示例默认注释，想启用删行首 #，值后是说明
+# 后缀匹配：AUTH_ZHU ↔ MOUNT_ZHU
 [vars]
-# SITE_TITLE = "Elist"
-# CACHE_CONTROL = "public, max-age=0, must-revalidate"
-# MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
-# S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
+# SITE_TITLE = "Elist"                          # 站点标题，默认 Elist
+# CACHE_CONTROL = "public, max-age=0, must-revalidate"  # 下载缓存头，默认每次校验
+# MOUNT_ORDER = "/od,/s3"                        # 根目录盘显示顺序，逗号分隔
+# S3_LINK_TTL = "86400"                          # S3 下载直链有效期秒数，默认 3600
+# CONFIG_AUTH = "ZHU"                            # 配置文件 .elist.xlsx 存哪个账号（AUTH 后缀名）
+# CONFIG_PATH = "/config"                        # 配置文件存储路径，默认根 /
+# CONF_PW = "你的密码"                            # .elist.xlsx 加密密码（可选）
+# AUTH_ZHU = '{"type":"onedrive","tenant_id":"<租户ID>","client_id":"<应用ID>","cert_thumbprint":"<x5t的base64url>","cert_key":"<私钥PEM>"}'  # OneDrive 租户凭据，Secret；cert_key 内换行写 \n
+# MOUNT_ZHU = '[{"user_id":"sharepoint","mounts":[{"path":"/pan","root":"/","title":"网盘"}]}]'  # 挂载配置，明文；数组可挂多用户，user_id=sharepoint 挂 SP 根站点
 
-# 注意：本方案刻意不使用 [[d1_databases]] / [[kv_namespaces]]，
-# 所有状态 = env vars(secret) + 存储内 .elist.xlsx 配置文件，零 KV/D1/SQL。
+# 密码/隐藏配置存存储根目录 .elist.xlsx；不用 KV/D1/SQL

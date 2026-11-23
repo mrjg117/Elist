@@ -28,22 +28,6 @@ export interface MountPoint {
   root: string;       // 账号内相对路径，如 /Photos；'/' 表示账号根
   title?: string;     // 展示名（可选）
   cache?: string;     // 覆盖全局 CACHE_CONTROL（可选）
-  e5rnl?: boolean;    // 是否参与 E5 续期（默认 false）
-}
-
-/** 用户配置（MOUNT_<NAME> 中的 users 数组元素）。 */
-export interface UserMount {
-  user_id?: string;   // 用户标识（OneDrive 组织租户用，S3 可忽略）
-  mounts: MountPoint[];
-  // —— SharePoint 源块（与 user_id 互斥）：site_id 顶层 + drives[] 分组（每库一个 drive_id + mounts）——
-  site_id?: string;   // SharePoint 站点 ID；空串 = 根站点。值空串也要写出键（不省略键）
-  drives?: DriveGroup[]; // 文档库分组；每个元素 = 一个文档库（drive_id 可空=默认库）+ 其下多文件夹
-}
-
-/** SharePoint 文档库分组：一个 drive_id 管一组文件夹。 */
-export interface DriveGroup {
-  drive_id?: string;  // 文档库(drive) ID；空串 = 该站点默认文档库。值空串也要写出键
-  mounts: MountPoint[];
 }
 
 /** 账号机密（AUTH_<NAME> 的值）：type + 凭据字段。 */
@@ -52,9 +36,8 @@ export interface AuthAccount {
   // —— 各类型鉴权字段（宽松，避免每加一种就改类型）——
   tenant_id?: string;
   client_id?: string;
-  cert_thumbprint?: string;     // 可选：x5t 显式覆盖（base64url 形式）。不填则从 cert_pem 自动算。
-  cert_pem?: string;            // 公钥证书 PEM（X.509，BEGIN CERTIFICATE），上传到 Azure 应用的那张；用于自动算 x5t
-  cert_key?: string;            // 组织租户证书私钥 PEM
+  cert_thumbprint?: string;  // 必填：x5t（证书指纹的 base64url），原样填入 JWT header
+  cert_key?: string;            // 证书私钥 PEM
   endpoint?: string;          // S3
   region?: string;            // S3
   bucket?: string;            // S3
@@ -62,9 +45,10 @@ export interface AuthAccount {
   secret_access_key?: string; // S3
 }
 
-/** 挂载配置（MOUNT_<NAME> 的值）：users 数组。 */
+/** 挂载配置（MOUNT_<NAME> 的值）。 */
 export interface MountConfig {
-  users: UserMount[];
+  user_id?: string;   // OneDrive 用户 UPN/objectId；'sharepoint' = 挂 SP 根站点；S3 可省
+  mounts: MountPoint[];
 }
 
 /**
@@ -77,11 +61,9 @@ export interface Mount {
   driver: string;     // = account.type（驱动注册名）
   title?: string;
   cache?: string;     // 覆盖全局缓存
-  e5rnl?: boolean;    // 是否参与 E5 续期
-  user_id?: string;   // 用户标识（OneDrive 组织租户用）
-  site_id?: string;   // SharePoint 站点 ID（空串=根站点）；仅 sharepoint 驱动用
-  drive_id?: string;  // SharePoint 文档库 ID（空串=默认库）；仅 sharepoint 驱动用
-  addition: Record<string, any>; // 该账号鉴权字段（不含 mounts）
+  user_id?: string;   // OneDrive UPN/objectId；'sharepoint' = SP 哨兵
+  tenant?: string;    // AUTH_<NAME> 后缀名，同一租户共用一种侧栏图标颜色
+  addition: Record<string, any>; // 该账号鉴权字段
 }
 
 export interface Driver {
@@ -116,12 +98,5 @@ export interface Env {
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
   CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）
   CONFIG_PATH?: string;    // 配置文件存储路径（存储内相对路径，如 / 或 /config）
-  // E5 续期配置
-  E5RNL_RUN_PROBABILITY?: string;    // 每次 cron 触发执行续期的概率（0-1）
-  E5RNL_MAX_API_CALLS?: string;      // 每轮最多 API 调用次数
-  E5RNL_MAX_RUNTIME_MS?: string;     // 每轮最大运行时间（毫秒）
-  E5RNL_CONCURRENCY?: string;        // 并发批次大小
-  E5RNL_ACTION_DELAY_MIN_MS?: string; // 动作间最小延迟（毫秒）
-  E5RNL_ACTION_DELAY_MAX_MS?: string; // 动作间最大延迟（毫秒）
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

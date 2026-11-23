@@ -1,6 +1,6 @@
 import type { Driver, Entry, Mount, Env } from '../types';
 import { BaseDriver } from './base';
-import { importRsaPrivateKey, signRs256, uuid, b64urlFromString, certX5t } from '../lib/crypto';
+import { importRsaPrivateKey, signRs256, uuid, b64urlFromString } from '../lib/crypto';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const TOKEN_URL = (tenant: string) =>
@@ -13,29 +13,18 @@ interface TokenCache {
 // 模块内存缓存（零 KV）：按挂载路径区分；多 isolate 各自缓存，略冗余但功能无碍。
 const tokenCache = new Map<string, TokenCache>();
 
-// 站点/库解析缓存（按 host / site_id 维度，懒加载，不阻塞 worker 启动）。
-const siteCache = new Map<string, string>();  // key = sharepoint_host -> 根站点 site_id
-const driveCache = new Map<string, string>(); // key = site_id -> 默认文档库 drive_id
+// 默认文档库 id（懒解析，模块级单值缓存）
+let resolvedDriveId = '';
 
 /**
- * SharePoint 驱动（组织租户证书 app-only，全球版）。
- * - 与 OneDrive 同一套证书凭据 client_credentials（RS256 JWT 自签 client_assertion）。
- * - 区别：地址前缀从 users/{userId}/drive 换成 drives/{driveId}；driveId 由 site_id + 默认库解析得到。
- * - site_id 空 -> 根站点（GET /sites/{host}）；drive_id 空 -> 该站点默认文档库（GET /sites/{site_id}/drive）。
- * - 凭据（含证书私钥）随账号 JSON 经 secret 注入，与 OneDrive 共用同一 AUTH_XXX。
- * - 注意：Azure 应用需授予 Sites.ReadWrite.All（OneDrive 的 Files.ReadWrite.All 不保证覆盖 SharePoint）。
+ * SharePoint 驱动（证书 app-only，只挂根站点 + 默认文档库）。
+ * 鉴权同 OneDrive；地址用 drives/{driveId}。需 Sites.ReadWrite.All。
  */
 export class SharePointDriver extends BaseDriver implements Driver {
   private tenantId = '';
   private clientId = '';
-  private thumbprint = '';     // 可显式给（旧配置兼容）；不给则从 cert_pem 自动算
-  private certPem = '';        // 公钥证书 PEM（上传到 Azure 的那张），用于自动算 x5t 指纹
-  private certKeyPem = '';     // 组织租户证书私钥 PEM（来自账号 JSON，非全局 env）
-  private spHost = '';         // SharePoint 主机名（zhbq.sharepoint.com），tenant 级，配在 AUTH_XXX 里
-  private siteId = '';         // 空串 = 根站点（由 sharepoint_host 解析）
-  private driveId = '';        // 空串 = 该站点默认文档库（由 site_id 解析）
-  private resolvedSiteId = '';
-  private resolvedDriveId = '';
+  private thumbprint = '';     // x5t（base64url 指纹），配置直接给
+  private certKeyPem = '';     // 证书私钥 PEM
   private certKey: CryptoKey | null = null;
   private key = '';            // 缓存键（挂载 path+root）
 
@@ -45,12 +34,7 @@ export class SharePointDriver extends BaseDriver implements Driver {
     this.tenantId = a.tenant_id || '';
     this.clientId = a.client_id || '';
     this.thumbprint = a.cert_thumbprint || '';
-    this.certPem = a.cert_pem || '';
     this.certKeyPem = a.cert_key || '';
-    this.spHost = a.sharepoint_host || '';
-    // site_id / drive_id 直接挂在 Mount 上（配置解析阶段从 drives[] 展开填入）
-    this.siteId = (mount as any).site_id || '';
-    this.driveId = (mount as any).drive_id || '';
     this.key = mount.mount + (mount.root || '');
   }
 
@@ -63,21 +47,13 @@ export class SharePointDriver extends BaseDriver implements Driver {
     return token;
   }
 
-  private async thumbprintValue(): Promise<string> {
-    if (this.thumbprint) return this.thumbprint;
-    if (!this.certPem) {
-      throw new Error('sharepoint requires cert_pem (public cert PEM) or explicit cert_thumbprint');
-    }
-    this.thumbprint = await certX5t(this.certPem);
-    return this.thumbprint;
-  }
-
   private async tokenByCert(): Promise<{ token: string; expires_in: number }> {
     const privPem = this.certKeyPem;
-    if (!privPem) throw new Error('cert_key not set for sharepoint mount');
+    if (!this.certKeyPem) throw new Error('cert_key not set for sharepoint mount');
+    if (!this.thumbprint) throw new Error('cert_thumbprint (base64url x5t) not set for sharepoint mount');
     if (!this.certKey) this.certKey = await importRsaPrivateKey(privPem);
     const now = Math.floor(Date.now() / 1000);
-    const header = { alg: 'RS256', typ: 'JWT', x5t: await this.thumbprintValue() };
+    const header = { alg: 'RS256', typ: 'JWT', x5t: this.thumbprint };
     const payload = {
       aud: TOKEN_URL(this.tenantId),
       iss: this.clientId,
@@ -109,52 +85,31 @@ export class SharePointDriver extends BaseDriver implements Driver {
     return { token: j.access_token, expires_in: j.expires_in };
   }
 
-  /** 解析 site_id：空串 -> 根站点（按 sharepoint_host 取一次，模块级缓存）。 */
-  private async resolveSiteId(): Promise<string> {
-    if (this.siteId) return this.siteId;
-    const cached = siteCache.get(this.spHost);
-    if (cached) return cached;
-    if (!this.spHost) throw new Error('sharepoint: site_id 为空时需 AUTH_XXX 配 sharepoint_host');
-    const token = await this.getToken();
-    const r = await this.graphGet(`${GRAPH}/sites/${encodeURIComponent(this.spHost)}`);
-    if (!r.id) throw new Error('SP resolve root site failed');
-    siteCache.set(this.spHost, r.id);
-    return r.id;
-  }
-
-  /** 解析 drive_id：空串 -> 该站点默认文档库（GET /sites/{id}/drive，模块级缓存）。 */
-  private async resolveDriveId(siteId: string): Promise<string> {
-    if (this.driveId) return this.driveId;
-    const cached = driveCache.get(siteId);
-    if (cached) return cached;
-    const token = await this.getToken();
-    const r = await this.graphGet(`${GRAPH}/sites/${encodeURIComponent(siteId)}/drive`);
-    if (!r.id) throw new Error('SP resolve default drive failed');
-    driveCache.set(siteId, r.id);
-    return r.id;
-  }
-
-  /** 懒解析（首次请求触发，不阻塞 worker 启动）。 */
+  /** 根站点 id → 默认文档库 id（懒解析，模块级单值缓存）。 */
   private async ensureResolved(): Promise<void> {
-    if (!this.resolvedSiteId) this.resolvedSiteId = await this.resolveSiteId();
-    if (!this.resolvedDriveId) this.resolvedDriveId = await this.resolveDriveId(this.resolvedSiteId);
+    if (resolvedDriveId) return;
+    const site = await this.graphGet(`${GRAPH}/sites/root`);
+    if (!site.id) throw new Error('SP resolve root site failed');
+    const drive = await this.graphGet(`${GRAPH}/sites/${encodeURIComponent(site.id)}/drive`);
+    if (!drive.id) throw new Error('SP resolve default drive failed');
+    resolvedDriveId = drive.id;
   }
 
   /** 账号内绝对路径 -> Graph 列表地址（sharepoint drive）。 */
   private async addr(accountPath: string): Promise<string> {
     await this.ensureResolved();
     const ap = accountPath.replace(/^\//, '');
-    if (!ap) return `${GRAPH}/drives/${this.resolvedDriveId}/root/children`;
+    if (!ap) return `${GRAPH}/drives/${resolvedDriveId}/root/children`;
     const seg = ap.split('/').map(encodeURIComponent).join('/');
-    return `${GRAPH}/drives/${this.resolvedDriveId}/items/root:/${seg}:/children`;
+    return `${GRAPH}/drives/${resolvedDriveId}/items/root:/${seg}:/children`;
   }
 
   private async itemAddr(accountPath: string): Promise<string> {
     await this.ensureResolved();
     const ap = accountPath.replace(/^\//, '');
-    if (!ap) return `${GRAPH}/drives/${this.resolvedDriveId}/root`;
+    if (!ap) return `${GRAPH}/drives/${resolvedDriveId}/root`;
     const seg = ap.split('/').map(encodeURIComponent).join('/');
-    return `${GRAPH}/drives/${this.resolvedDriveId}/items/root:/${seg}:`;
+    return `${GRAPH}/drives/${resolvedDriveId}/items/root:/${seg}:`;
   }
 
   private async graphGet(url: string, select = ''): Promise<any> {

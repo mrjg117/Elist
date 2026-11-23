@@ -1,15 +1,9 @@
 import type { Mount, Env, AuthAccount, MountConfig } from './types';
 
 /**
- * 从 env 解析多盘配置（v4，变量拆分）。
- *
- * 设计：
- *   - AUTH_<NAME>：账号机密（type、凭据）
- *   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
- *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
- *
- * 解析时把每个账号展开成多个 Mount（目录级），按最长前缀匹配派发。
- * 零 KV/D1/SQL：改配置 = 改 env(secret) + 重部署（边缘秒级）。
+ * 从 env 解析多盘配置（v4）。
+ * AUTH_<NAME>：凭据；MOUNT_<NAME>：挂载；后缀匹配配对。
+ * 展开为目录级 Mount，按最长前缀匹配派发。零 KV/D1/SQL。
  */
 
 let cached: Mount[] | null = null;
@@ -52,44 +46,19 @@ export function getMounts(env: Env): Mount[] {
     // 该账号的鉴权字段（作为每个挂载点的 addition）
     const addition: Record<string, any> = { ...auth };
 
-    // 遍历 users 数组，展开所有挂载点
-    for (const user of mountConfig.users || []) {
-      // SharePoint 源块：带 site_id（与 user_id 互斥），drives[] 分组下放 mounts
-      const spSiteId = (user as any).site_id;
-      const spDrives = (user as any).drives;
-      if (spSiteId !== undefined || spDrives) {
-        const siteId = spSiteId || ''; // 空串 = 根站点
-        for (const grp of spDrives || []) {
-          const driveId = (grp && (grp as any).drive_id) || ''; // 空串 = 默认库
-          for (const mp of (grp && (grp as any).mounts) || []) {
-            mounts.push({
-              mount: normalize(mp.path || '/'),
-              root: normalize(mp.root || '/'),
-              driver: 'sharepoint', // 显式指定，不继承 auth.type（同一 AUTH_XXX 可能是 onedrive）
-              title: mp.title,
-              cache: mp.cache,
-              e5rnl: !!mp.e5rnl,
-              site_id: siteId,
-              drive_id: driveId,
-              addition,
-            });
-          }
-        }
-        continue;
-      }
-      // 原有 OneDrive / S3 分支（不变）
-      for (const mp of user.mounts || []) {
-        mounts.push({
-          mount: normalize(mp.path || '/'),
-          root: normalize(mp.root || '/'),
-          driver: auth.type,
-          title: mp.title,
-          cache: mp.cache,
-          e5rnl: !!mp.e5rnl,
-          user_id: user.user_id,
-          addition,
-        });
-      }
+    // 展开挂载点：user_id === 'sharepoint' 走 SP 驱动，否则按 auth.type
+    for (const mp of mountConfig.mounts || []) {
+      const isSP = mountConfig.user_id === 'sharepoint';
+      mounts.push({
+        mount: normalize(mp.path || '/'),
+        root: normalize(mp.root || '/'),
+        driver: isSP ? 'sharepoint' : auth.type,
+        title: mp.title,
+        cache: mp.cache,
+        user_id: mountConfig.user_id,
+        tenant: name,
+        addition,
+      });
     }
   }
 
@@ -142,17 +111,17 @@ export function normalize(path: string): string {
  * 每个盘只出现一次（按 mount 前缀去重，保留首个）。
  * 隐藏状态从 .elist.xlsx 配置读取，由调用方处理。
  */
-export function getRoots(env: Env): { path: string; title?: string }[] {
+export function getRoots(env: Env): { path: string; title?: string; driver: string; tenant?: string }[] {
   const mounts = getMounts(env);
   // 先按路径长度升序排序，确保父目录先于子目录处理
   const sorted = [...mounts].sort((a, b) => a.mount.length - b.mount.length);
-  const roots: { path: string; title?: string }[] = [];
+  const roots: { path: string; title?: string; driver: string; tenant?: string }[] = [];
   
   // 按前缀去重：如果 /od 已添加，则 /od/photos 不再添加
   for (const m of sorted) {
     const isChild = roots.some(r => m.mount === r.path || m.mount.startsWith(r.path + '/'));
     if (!isChild) {
-      roots.push({ path: m.mount, title: m.title });
+      roots.push({ path: m.mount, title: m.title, driver: m.driver, tenant: m.tenant });
     }
   }
 

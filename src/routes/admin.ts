@@ -299,20 +299,3 @@ export async function handleConfigStatus(c: Context<{ Bindings: Env }>) {
   const info = await getConfigInfo(c);
   return c.json(info);
 }
-
-// POST /api/admin/e5rnl-test —— 真实跑一遍所有 E5 续期 API（建/改/读/删），与 cron 等价（非连通性 ping）
-export async function handleE5rnlTest(c: Context<{ Bindings: Env }>) {
-  if (!(await isAuthenticated(c))) {
-    return c.json({ error: '未授权' }, 401);
-  }
-  try {
-    const { runRenewalTest } = await import('../e5rnl');
-    const result = await runRenewalTest(c.env);
-    if (!result || result.accounts.length === 0) {
-      return c.json({ ok: false, message: '未找到任何 OneDrive 账号，无法测试' });
-    }
-    return c.json({ ok: true, results: result.accounts, missingPermissions: result.missingPermissions });
-  } catch (e: any) {
-    return c.json({ ok: false, error: e.message || String(e) }, 500);
-  }
-}

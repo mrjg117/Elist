@@ -11,6 +11,10 @@ const ICON = {
   dir: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5z"/></svg>',
   file: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/></svg>',
   drive: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16a2 2 0 0 1 2 2v3H2V7a2 2 0 0 1 2-2zm-2 7h20v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7zm4 3h4v2H6v-2z"/></svg>',
+  // 平台图标：实心几何造型，与整体图标同一笔法；按 driver 选
+  onedrive: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 18.5a4.5 4.5 0 0 1-.4-9A6 6 0 0 1 18 10.5a4.2 4.2 0 0 1-.6 8H7z"/></svg>',
+  sharepoint: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10.5 4a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0z"/></svg>',
+  s3: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c4.4 0 8 .9 8 2s-3.6 2-8 2-8-.9-8-2 3.6-2 8-2zM5 7.2c.6.9 3.5 1.6 7 1.6s6.4-.7 7-1.6L18.4 19a1.5 1.5 0 0 1-1.5 1.4H7.1A1.5 1.5 0 0 1 5.6 19L5 7.2z"/></svg>',
   home: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3 2 12h3v8h6v-5h2v5h6v-8h3L12 3z"/></svg>',
   hide: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 7a5 5 0 0 1 5 5c0 .65-.13 1.26-.36 1.83l2.42 2.42A11.6 11.6 0 0 0 23 12C21.3 7.7 17 4.6 12 4.6c-1.3 0-2.55.2-3.7.57l2.2 2.2A5 5 0 0 1 12 7zm-6.4-.4 3 3A5 5 0 0 0 12 17a5 5 0 0 0 4.9-4l3 3A11.7 11.7 0 0 1 12 19.4C7 19.4 2.7 16.3 1 12a12.2 12.2 0 0 1 4.6-4.4zM4.3 2 3 3.3l3 3 2 2 .2.2A5 5 0 0 0 12 17a5 5 0 0 0 4.4-2.6L20 21l1.3-1.3L4.3 2z"/></svg>',
   rename: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
@@ -32,6 +36,8 @@ const ICON = {
   img: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm4 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM5 17l4-5 3 3 3-4 4 6H5z"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>',
+  theme: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0-5 1.6 3.2L17 6.1l-3.2 1.6L12 11l-1.8-3.3L7 6.1l3.4-1.1L12 2zm7 12 1.4 2.8L23 17.4l-2.6 1.2L19 21.5l-1.4-2.9-2.6-1.2 2.6-1.2L19 14z"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5C6.5 5 2 12 2 12s4.5 7 10 7 10-7 10-7-4.5-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>',
 };
 
 const state = {
@@ -345,12 +351,11 @@ function render() {
           <div class="logo">E</div>
           <div class="brand">${esc(state.title)}<span class="dot">.</span></div>
         </div>
-        <div class="side-section">盘符 / 挂载</div>
         <nav class="drives" id="drives"></nav>
         <div class="side-foot">
           <div class="admin-state ${state.admin ? 'on' : ''}">${state.admin ? '● 已登录管理员' : '○ 未登录'}</div>
           <button class="btn block" id="admin">${ICON.lock}<span>${adminLabel}</span></button>
-          <button class="btn block icon" id="theme"><span>◐</span><span>切换主题</span></button>
+          <button class="btn block icon" id="theme" title="切换主题">${ICON.theme}</button>
         </div>
       </aside>
       <main class="main">
@@ -382,13 +387,24 @@ function render() {
   updateBatchUI();
 }
 
+// 稳定 hash：租户名 → 1..8 色号。增删盘不影响其他租户配色。
+function tenantHue(name) {
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 8 + 1;
+}
+
 function renderDrives() {
   const box = document.getElementById('drives');
-  const home = `<button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/">${ICON.home}<span class="name">根目录</span></button>`;
+  const home = `<button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/"><span class="glyph home">${ICON.home}</span><span class="name">根目录</span></button>`;
+  // 形状按平台(driver)用官方 logo，颜色按租户(tenant)；未知平台回退通用硬盘图标
+  const driveIcon = { onedrive: ICON.onedrive, sharepoint: ICON.sharepoint, s3: ICON.s3 };
   const items = state.drives.map((d) => {
     const active = state.path === d.path || state.path.startsWith(d.path + '/') ? 'active' : '';
-    // 与列表/网格一致：同步显示隐藏(👁)/加密(🔒)徽标（隐藏仅管理员可见，非管理员已被服务端过滤）
-    return `<button class="drive ${active}" data-path="${esc(d.path)}">${ICON.drive}<span class="name">${esc(d.name)}</span>${badgesHtml(d)}</button>`;
+    const ico = driveIcon[d.driver] || ICON.drive;
+    const t = d.tenant ? ` t${tenantHue(d.tenant)}` : '';
+    // 与列表/网格一致：同步显示隐藏/加密徽标（隐藏仅管理员可见，非管理员已被服务端过滤）
+    return `<button class="drive ${active}" data-path="${esc(d.path)}"><span class="glyph pf${t}">${ico}</span><span class="name">${esc(d.name)}</span>${badgesHtml(d)}</button>`;
   }).join('');
   box.innerHTML = home + items;
   box.querySelectorAll('.drive').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
@@ -403,7 +419,8 @@ function renderCrumbs() {
   box.innerHTML = crumbs.map((c, i) => {
     const cur = i === crumbs.length - 1;
     const sep = i > 0 ? '<span class="crumb-sep">/</span>' : '';
-    return `${sep}<button class="crumb${cur ? ' current' : ''}" data-path="${esc(c.path)}">${esc(c.name)}</button>`;
+    const label = i === 0 ? `<span class="glyph home">${ICON.home}</span>` : esc(c.name);
+    return `${sep}<button class="crumb${cur ? ' current' : ''}" data-path="${esc(c.path)}"${i === 0 ? ' title="根目录"' : ''}>${label}</button>`;
   }).join('');
   box.querySelectorAll('.crumb').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
 }
@@ -430,8 +447,8 @@ function itemActionsHtml(entry) {
 
 // 隐藏/加密徽标（管理员可见隐藏目录时显示）
 function badgesHtml(e) {
-  return (e.hidden ? '<span class="badge" title="已隐藏">👁</span>' : '') +
-         (e.locked ? '<span class="badge" title="已加密">🔒</span>' : '');
+  return (e.hidden ? `<span class="badge" title="已隐藏">${ICON.eye}</span>` : '') +
+         (e.locked ? `<span class="badge" title="已加密">${ICON.lock}</span>` : '');
 }
 
 function renderList() {
@@ -771,10 +788,8 @@ async function adminMenu() {
       <div class="cfg-row"><span class="cfg-label">配置文件路径</span><span class="cfg-val" id="cfgPath">—</span></div>
     </div>
     <div class="row-actions" style="flex-direction:column;align-items:stretch;gap:8px">
-      <button class="btn block" id="e5test">${ICON.refresh}<span>测试所有 E5 续期 API</span></button>
       <button class="btn block danger" id="logout">${ICON.del}<span>登出</span></button>
-    </div>
-    <div id="e5result" class="e5-result" style="display:none"></div>`;
+    </div>`;
   const bd = openModal(m);
   // 拉取当前配置文件位置
   try {
@@ -785,48 +800,6 @@ async function adminMenu() {
     m.querySelector('#cfgAccount').textContent = '获取失败';
     m.querySelector('#cfgPath').textContent = e.message || '—';
   }
-  m.querySelector('#e5test').onclick = async () => {
-    const btn = m.querySelector('#e5test');
-    const box = m.querySelector('#e5result');
-    btn.disabled = true;
-    box.style.display = 'block';
-    box.textContent = '正在真实跑全部 E5 续期 API（建/改/读/删）…';
-    try {
-      const r = await apiSend('/api/admin/e5rnl-test', {}, { admin: true });
-      if (!r.ok) {
-        box.className = 'e5-result fail';
-        box.textContent = '测试失败：' + (r.error || r.message || '未知错误');
-        btn.disabled = false;
-        return;
-      }
-      // 按账号汇总每 action 结果
-      let html = '<div class="e5-sum">测试完成，按账号结果：</div>';
-      for (const item of r.results) {
-        const ok = item.results.filter((x) => x.ok && !x.skipped).length;
-        const total = item.results.filter((x) => !x.skipped).length;
-        const fails = item.results.filter((x) => !x.ok && !x.skipped);
-        html += `<div class="e5-acc"><div class="e5-acc-h">${esc(item.key)} — ${ok}/${total} 成功</div>`;
-        if (fails.length) {
-          html += '<div class="e5-fails">' + fails.map((f) => {
-            const label = f.requiresPermission ? `需授权 ${f.requiresPermission}` : (f.error || '失败');
-            return `<span class="e5-${f.requiresPermission ? 'perm' : 'err'}">${esc(f.action)}: ${esc(label)}</span>`;
-          }).join('<br/>') + '</div>';
-        }
-        html += '</div>';
-      }
-      // 缺失权限汇总（一次性授予即可让灰色项转绿）
-      if (r.missingPermissions && r.missingPermissions.length) {
-        html += `<div class="e5-perm-sum"><strong>需在 Entra ID 为应用授予并管理员同意以下 Graph 权限：</strong><br/>`
-          + r.missingPermissions.map((p) => `<code>${esc(p)}</code>`).join('、') + '</div>';
-      }
-      box.className = 'e5-result ok';
-      box.innerHTML = html;
-    } catch (e) {
-      box.className = 'e5-result fail';
-      box.textContent = '请求异常：' + e.message;
-    }
-    btn.disabled = false;
-  };
   m.querySelector('#logout').onclick = () => {
     closeModal(bd);
     state.admin = false; state.adminPw = '';

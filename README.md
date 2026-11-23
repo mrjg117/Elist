@@ -1,8 +1,6 @@
 # Elist
 
-边缘函数部署的**多盘网盘聚合工具**。把对象存储（S3 兼容：S3 / R2 / OSS / COS / MinIO）与 OneDrive（组织租户证书鉴权）两类"盘"聚合成一个统一的浏览界面，下载走 **302 直链**（浏览器原生多线程、不耗边缘 CPU）。
-
-同时集成 **E5 订阅续期**功能，通过 Cron 触发器定期调用 Microsoft Graph API，保持 E5 账号活跃。
+边缘函数部署的**多盘网盘聚合工具**。把对象存储（S3 兼容：S3 / R2 / OSS / COS / MinIO）与 OneDrive / SharePoint（组织租户证书鉴权）聚合成一个统一的浏览界面，下载走 **302 直链**（浏览器原生多线程、不耗边缘 CPU）。
 
 ---
 
@@ -11,6 +9,7 @@
 - **多盘聚合**：一个账号可挂 N 个目录，多个账号并行。盘 = 配置数据，不是代码。
 - **两类存储后端**：
   - `onedrive`：组织租户 Azure 证书凭据（RS256 JWT 自签），无 refresh_token、免 2 年失效。
+  - `sharepoint`：同凭据挂根站点 + 默认文档库，无需站点/文档库 ID。
   - `s3`：S3 / R2 / OSS / COS / MinIO，手写 AWS SigV4，不引 aws-sdk。
 - **302 直链下载**：浏览器直接从源站拉文件，边缘不搬字节、天然支持 Range 多线程。
 - **WebDAV**：`/dav` 路径下提供完整 WebDAV 支持（读/写），可对接 rclone、RaiDrive 等工具。读操作无需认证，写操作需管理员密码。
@@ -33,7 +32,6 @@
   - 字体文件：字形预览
 - **文件分享**：复制链接、二维码分享。
 - **被动缓存搜索**：只在用户已浏览过的目录里匹配，绝不主动全量扫描。
-- **E5 订阅续期**：Cron 触发，随机抽取 API 动作执行（32 个动作），多账号预算分配。
 - **存储 0 依赖**：不使用 KV / D1 / SQL；状态 = env(secret) + 存储内 `.elist.xlsx`。
 
 ---
@@ -47,11 +45,6 @@
    -> list / link(302)
    -> 目录列表惰性缓存进 per-isolate 内存 Map（TTL，零 KV）
    -> 前端 SPA（Workers Assets 边缘托管）
-
-Cron 触发（每 10 分钟）
-   -> 提取 OneDrive 账号
-   -> 按预算分配 API 调用
-   -> 续期账号跑满预算，非续期账号只刷缓存
 ```
 
 ---
@@ -89,7 +82,7 @@ npm run deploy
   "type": "onedrive",
   "tenant_id": "<租户GUID>",
   "client_id": "<应用ID>",
-  "cert_pem": "-----BEGIN CERTIFICATE-----\n<公钥证书 PEM>\n-----END CERTIFICATE-----",
+  "cert_thumbprint": "<证书指纹的 base64url (x5t)>",
   "cert_key": "-----BEGIN PRIVATE KEY-----\n<私钥 PEM>\n-----END PRIVATE KEY-----"
 }
 ```
@@ -111,25 +104,32 @@ npm run deploy
 
 ```json
 {
-  "users": [
-    {
-      "user_id": "alice@org.com",
-      "mounts": [
-        { "path": "/alice", "root": "/", "title": "Alice 的网盘" }
-      ]
-    },
-    {
-      "user_id": "bob@org.com",
-      "mounts": [
-        { "path": "/bob", "root": "/", "title": "Bob 的网盘" },
-        { "path": "/bob/photos", "root": "/Photos", "title": "照片", "e5rnl": true }
-      ]
-    }
+  "user_id": "alice@org.com",
+  "mounts": [
+    { "path": "/alice", "root": "/", "title": "Alice 的网盘" },
+    { "path": "/alice/photos", "root": "/Photos", "title": "照片" }
   ]
 }
 ```
 
-> 一个 `AUTH_<NAME>` 应用证书可授权访问多位用户：在 `users` 数组里写多个 `user_id` 即可，每个用户的 `mounts` 独立挂载到不同前缀（如上 `alice@org.com` 与 `bob@org.com`）。
+SharePoint（同一份凭据挂根站点 + 默认文档库）：
+
+```json
+{
+  "user_id": "sharepoint",
+  "mounts": [
+    { "path": "/sp", "root": "/", "title": "SharePoint" }
+  ]
+}
+```
+
+> 一份 `AUTH_<NAME>` 可挂多个用户：写多对 `AUTH_*`/`MOUNT_*`，各自 `user_id` 不同。SP 挂载复用同一 AUTH，`user_id` 填 `"sharepoint"` 即可。
+
+**顶层字段：**
+
+| 字段 | 说明 |
+|------|------|
+| `user_id` | OneDrive 必填（UPN 或 objectId）；SP 填 `"sharepoint"`；S3 可省 |
 
 **挂载项字段：**
 
@@ -139,7 +139,6 @@ npm run deploy
 | `root` | string | 账号内相对路径，`/` 表示账号根 |
 | `title` | string | 展示名（可选） |
 | `cache` | string | 覆盖全局 CACHE_CONTROL（可选） |
-| `e5rnl` | boolean | 是否启用 E5 续期（可选，默认 false） |
 
 > 注意：挂载项不支持 `hide` 和 `sort` 字段。隐藏通过 `.elist.xlsx` 的 `hidden` sheet 配置，排序通过 URL 参数 `?sort=` 控制。
 
@@ -200,48 +199,6 @@ npm run deploy
 ### 图片 EXIF
 
 登录后预览图片时，自动显示 EXIF 信息（相机、时间、GPS 等）。
-
----
-
-## E5 订阅续期
-
-### 启用方式
-
-在挂载配置中设置 `e5rnl: true`：
-
-```json
-{
-  "user_id": "user@org.com",
-  "mounts": [
-    {
-      "path": "/od1",
-      "root": "/",
-      "e5rnl": true
-    }
-  ]
-}
-```
-
-### 工作原理
-
-- Cron 触发器每 10 分钟执行一次
-- 按 `E5RNL_RUN_PROBABILITY` 概率决定是否执行（制造时间波动）
-- 提取所有 OneDrive 账号，去重
-- 预算分配：
-  - 续期账号（`e5rnl: true`）：平均分配剩余预算，尽量跑满
-  - 非续期账号：只分配 1 次调用（list 刷缓存）
-- 随机抽取 API 动作（可重复），包括读写操作
-
-### 续期配置
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `E5RNL_RUN_PROBABILITY` | 每次触发执行续期的概率（0-1） | `0.5` |
-| `E5RNL_MAX_API_CALLS` | 每轮最多 API 调用次数 | `48` |
-| `E5RNL_MAX_RUNTIME_MS` | 每轮最大运行时间（毫秒） | `25000` |
-| `E5RNL_CONCURRENCY` | 并发批次大小 | `6` |
-| `E5RNL_ACTION_DELAY_MIN_MS` | 动作间最小延迟（毫秒） | `0` |
-| `E5RNL_ACTION_DELAY_MAX_MS` | 动作间最大延迟（毫秒） | `300` |
 
 ---
 
@@ -318,12 +275,11 @@ npm run deploy       # 部署
 
 ```
 src/
-  index.ts            Hono 入口（路由 + 驱动注册 + scheduled handler）
+  index.ts            Hono 入口（路由 + 驱动注册）
   types.ts            类型定义
   config.ts           AUTH_*/MOUNT_* 解析 + 根目录盘列表
-  drivers/            s3 / onedrive / registry
+  drivers/            s3 / onedrive / sharepoint / registry
   lib/                acl / cache / crypto / dispatch / xlsx-config / xml
   routes/             fs(列表/下载/搜索/直链) / admin(登录/配置) / webdav
-  e5rnl/              actions(32个API动作) / scheduler(调度器) / index(入口)
   web/                前端 SPA（index.html + app.js）
 ```

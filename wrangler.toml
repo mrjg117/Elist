@@ -27,10 +27,11 @@ run_worker_first = true
 #   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
 #
 # AUTH_<NAME> 示例（OneDrive）：
-#   {"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_pem":"...","cert_key":"..."}
+#   {"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_thumbprint":"<base64url x5t>","cert_key":"..."}
 #
 # MOUNT_<NAME> 示例：
-#   {"users":[{"user_id":"user@org.com","mounts":[{"path":"/od","root":"/","title":"我的网盘","e5rnl":true}]}]}
+#   {"user_id":"user@org.com","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
+# SP 挂根站点：user_id 写 "sharepoint"，mounts 同上
 #
 # 密码/隐藏配置：统一存放在存储根目录的 .elist.xlsx 文件中
 #   - passwords sheet：路径密码配置
@@ -50,18 +51,6 @@ SITE_TITLE = "Elist"
 CACHE_CONTROL = "public, max-age=0, must-revalidate"
 # MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
 # S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
-
-# E5 续期配置
-E5RNL_RUN_PROBABILITY = "0.5"    # 每次 cron 触发执行续期的概率（0-1），制造时间波动
-E5RNL_MAX_API_CALLS = "48"       # 每轮最多 API 调用次数
-E5RNL_MAX_RUNTIME_MS = "25000"   # 每轮最大运行时间（毫秒）
-E5RNL_CONCURRENCY = "6"          # 并发批次大小
-E5RNL_ACTION_DELAY_MIN_MS = "0"  # 动作间最小延迟（毫秒）
-E5RNL_ACTION_DELAY_MAX_MS = "300" # 动作间最大延迟（毫秒）
-
-# Cron 触发器：每 10 分钟触发一次 E5 续期
-[triggers]
-crons = ["*/10 * * * *"]
 
 # 注意：本方案刻意不使用 [[d1_databases]] / [[kv_namespaces]]，
 # 所有状态 = env vars(secret) + 存储内 .elist.xlsx 配置文件，零 KV/D1/SQL。

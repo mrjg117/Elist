@@ -127,42 +127,12 @@ export function getConfigSaveTargets(c: Context<{ Bindings: Env }>): string[] {
   return acc ? [acc] : [];
 }
 
-/** 取某账号在 MOUNT_<NAME> 配置中的 user_id（OneDrive app-only 鉴权必需）。
- *  优先取命中 CONFIG_PATH 的挂载用户；否则取首个有挂载的用户。
- *  缺失会触发 onedrive.ts 的 `requires user_id` 报错，导致配置加载失败、所有子目录被门禁拦截。
- */
+/** 取 MOUNT_<NAME> 的 user_id（OneDrive app-only 必需）。 */
 export function getMountUserId(env: Env, accountName: string): string {
   const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
   if (typeof raw !== 'string') return '';
   try {
-    const cfg = JSON.parse(raw) as MountConfig;
-    const path = normalize(env.CONFIG_PATH || '/');
-    for (const user of cfg.users || []) {
-      for (const mp of user.mounts || []) {
-        if (normalize(mp.path || '/') === path) return user.user_id || '';
-      }
-    }
-    return cfg.users?.[0]?.user_id || '';
-  } catch {
-    return '';
-  }
-}
-
-/** 取某账号 MOUNT_<NAME> 配置中，命中 CONFIG_PATH 的挂载用户标识（user_id）。
- *  同一 AUTH_ 账号下可能有多个 user（多邮箱/多盘），配置具体落在哪个 user 的盘里靠它区分。
- *  优先取命中 CONFIG_PATH 的 user；否则取首个有挂载的 user。 */
-export function getConfigUser(env: Env, accountName: string): string {
-  const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
-  if (typeof raw !== 'string') return '';
-  try {
-    const cfg = JSON.parse(raw) as MountConfig;
-    const path = normalize(env.CONFIG_PATH || '/');
-    for (const user of cfg.users || []) {
-      for (const mp of user.mounts || []) {
-        if (normalize(mp.path || '/') === path) return user.user_id || '';
-      }
-    }
-    return cfg.users?.[0]?.user_id || '';
+    return (JSON.parse(raw) as MountConfig).user_id || '';
   } catch {
     return '';
   }
@@ -285,7 +255,7 @@ export async function getConfigInfo(c: Context<{ Bindings: Env }>): Promise<{ ac
     try { await loadXlsxConfig(c, false); } catch { /* 失败安全 */ }
   }
   const acc = lastConfigAccount || getConfigAccount(c);
-  const user = acc ? getConfigUser(c.env, acc) : '';
+  const user = acc ? getMountUserId(c.env, acc) : '';
   const accountLabel = acc ? (user ? `${acc} / ${user}` : acc) : null;
   const base = normalize(c.env.CONFIG_PATH || '/');
   const path = base === '/' ? '/.elist.xlsx' : base + '/.elist.xlsx';
@@ -363,6 +333,8 @@ export async function handleList(c: Context<{ Bindings: Env }>) {
       name: v.root.title || v.root.path,
       path: v.root.path,
       isDir: true,
+      driver: v.root.driver, // 平台类型，前端据此选侧栏图标
+      tenant: v.root.tenant, // AUTH 后缀名，前端据此选侧栏图标颜色（非凭据，仅标识名）
       // hidden 标记绝不泄露给未授权访客；locked（加密）可安全展示 🔒，与子目录列表行为一致
       ...(admin ? { hidden: v.hidden, locked: v.locked } : { locked: v.locked }),
     }));

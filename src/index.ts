@@ -5,10 +5,9 @@ import { S3Driver } from './drivers/s3';
 import { OneDriveDriver } from './drivers/onedrive';
 import { SharePointDriver } from './drivers/sharepoint';
 import { handleList, handleSearch, handleRaw, handleConfigSave, handleConfigClear } from './routes/fs';
-import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig, handleConfigStatus, handleE5rnlTest } from './routes/admin';
+import { handleLogin, handleLogout, handleGetConfig, handleSetConfig, handleSaveConfig, handleConfigStatus } from './routes/admin';
 import { webdavHandler } from './routes/webdav';
 import { HttpError } from './lib/dispatch';
-import { handleScheduled } from './e5rnl';
 import fileManagementApp from './routes/file-management';
 
 // 注册驱动：网盘与 S3 只是表里的两项，无任何特判。
@@ -52,7 +51,6 @@ app.get('/api/admin/config', handleGetConfig);
 app.post('/api/admin/config', handleSetConfig);
 app.post('/api/admin/save', handleSaveConfig);
 app.get('/api/admin/status', handleConfigStatus);
-app.post('/api/admin/e5rnl-test', handleE5rnlTest);
 
 // 文件管理API（需要管理员权限）
 app.route('/api/file', fileManagementApp);
@@ -92,7 +90,4 @@ app.get('*', async (c) => {
 
 export default {
   fetch: app.fetch,
-  scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(handleScheduled(env));
-  },
 };

@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env, Entry, Mount, MountConfig } from '../types';
+import type { Env, Entry, Mount, MountConfig, UserMount } from '../types';
 import { dispatch } from '../lib/dispatch';
 import {
   checkPathPassword,
@@ -127,12 +127,23 @@ export function getConfigSaveTargets(c: Context<{ Bindings: Env }>): string[] {
   return acc ? [acc] : [];
 }
 
-/** 取 MOUNT_<NAME> 的 user_id（OneDrive app-only 必需）。 */
+/**
+ * 取 MOUNT_<NAME> 的 user_id（OneDrive app-only 必需）。
+ * 兼容三种写法；多 user 时取第一个非 sharepoint 的 user（配置文件放真实用户盘里），
+ * 全是 sharepoint 则回退第一个。
+ */
 export function getMountUserId(env: Env, accountName: string): string {
   const raw = (env as Record<string, unknown>)[`MOUNT_${accountName}`];
   if (typeof raw !== 'string') return '';
   try {
-    return (JSON.parse(raw) as MountConfig).user_id || '';
+    const cfg = JSON.parse(raw) as MountConfig;
+    const users: UserMount[] = Array.isArray(cfg)
+      ? cfg
+      : (cfg && typeof cfg === 'object' && 'users' in cfg && Array.isArray(cfg.users))
+        ? cfg.users
+        : [cfg as UserMount];
+    const real = users.find((u) => u.user_id && u.user_id !== 'sharepoint');
+    return (real || users[0])?.user_id || '';
   } catch {
     return '';
   }

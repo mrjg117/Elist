@@ -22,6 +22,7 @@ const ICON = {
   del: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2zM4 6h16v1H4V6z"/></svg>',
   newfolder: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9h-7V4zm4 8h-3v3h-2v-3H9v-2h3V7h2v3h3v2z"/></svg>',
   lock: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 0 1 6 0v3H9z"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0v1H4v-1z"/></svg>',
   grid: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3h2v9h3l-4 4-4-4h3V3zM5 19h14v2H5v-2z"/></svg>',
@@ -36,7 +37,8 @@ const ICON = {
   img: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm4 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM5 17l4-5 3 3 3-4 4 6H5z"/></svg>',
   menu: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>',
-  theme: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0-5 1.6 3.2L17 6.1l-3.2 1.6L12 11l-1.8-3.3L7 6.1l3.4-1.1L12 2zm7 12 1.4 2.8L23 17.4l-2.6 1.2L19 21.5l-1.4-2.9-2.6-1.2 2.6-1.2L19 14z"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM1 11h3v2H1v-2zm19 0h3v2h-3v-2zM4.2 5.6 5.6 4.2l2.1 2.1-1.4 1.4-2.1-2.1zm12.1 12.1 1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zm2.1-12.1 2.1 2.1-1.4 1.4-2.1-2.1 1.4-1.4zM6.3 17.7l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1z"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5 8.7 8.7 0 1 0 20.5 14.6z"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5C6.5 5 2 12 2 12s4.5 7 10 7 10-7 10-7-4.5-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>',
 };
 
@@ -343,20 +345,19 @@ async function loadSidebar() {
 
 // ---------------- 渲染 ----------------
 function render() {
-  const adminLabel = state.admin ? '管理员 ●' : '管理员';
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   app.innerHTML = `
     <div class="layout">
       <aside class="sidebar">
-        <div class="side-head">
+        <div class="side-head" id="home" title="返回根目录">
           <div class="logo">E</div>
           <div class="brand">${esc(state.title)}<span class="dot">.</span></div>
+          <div class="head-actions">
+            <button class="head-icon ${state.admin ? 'on' : ''}" id="admin" title="${state.admin ? '管理员已登录' : '管理员登录'}">${state.admin ? ICON.user : ICON.lock}</button>
+            <button class="head-icon" id="theme" title="${dark ? '切换到亮色' : '切换到暗色'}">${dark ? ICON.sun : ICON.moon}</button>
+          </div>
         </div>
         <nav class="drives" id="drives"></nav>
-        <div class="side-foot">
-          <div class="admin-state ${state.admin ? 'on' : ''}">${state.admin ? '● 已登录管理员' : '○ 未登录'}</div>
-          <button class="btn block" id="admin">${ICON.lock}<span>${adminLabel}</span></button>
-          <button class="btn block icon" id="theme" title="切换主题">${ICON.theme}</button>
-        </div>
       </aside>
       <main class="main">
         <div class="toolbar">
@@ -396,7 +397,6 @@ function tenantHue(name) {
 
 function renderDrives() {
   const box = document.getElementById('drives');
-  const home = `<button class="drive ${state.path === '/' ? 'active' : ''}" data-path="/"><span class="glyph home">${ICON.home}</span><span class="name">根目录</span></button>`;
   // 形状按平台(driver)用官方 logo，颜色按租户(tenant)；未知平台回退通用硬盘图标
   const driveIcon = { onedrive: ICON.onedrive, sharepoint: ICON.sharepoint, s3: ICON.s3 };
   const items = state.drives.map((d) => {
@@ -406,22 +406,23 @@ function renderDrives() {
     // 与列表/网格一致：同步显示隐藏/加密徽标（隐藏仅管理员可见，非管理员已被服务端过滤）
     return `<button class="drive ${active}" data-path="${esc(d.path)}"><span class="glyph pf${t}">${ico}</span><span class="name">${esc(d.name)}</span>${badgesHtml(d)}</button>`;
   }).join('');
-  box.innerHTML = home + items;
+  box.innerHTML = items;
   box.querySelectorAll('.drive').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
 }
 
 function renderCrumbs() {
   const box = document.getElementById('crumbs');
   const parts = state.path.split('/').filter(Boolean);
-  const crumbs = [{ name: '根', path: '/' }];
+  // 始终以「房子图标 /」开头，不显示"根目录"文字；斜杠保留作层级分隔
+  let html = `<button class="crumb" data-path="/"><span class="glyph home">${ICON.home}</span></button><span class="crumb-sep">/</span>`;
   let acc = '';
-  for (const p of parts) { acc += '/' + p; crumbs.push({ name: p, path: acc }); }
-  box.innerHTML = crumbs.map((c, i) => {
-    const cur = i === crumbs.length - 1;
-    const sep = i > 0 ? '<span class="crumb-sep">/</span>' : '';
-    const label = i === 0 ? `<span class="glyph home">${ICON.home}</span>` : esc(c.name);
-    return `${sep}<button class="crumb${cur ? ' current' : ''}" data-path="${esc(c.path)}"${i === 0 ? ' title="根目录"' : ''}>${label}</button>`;
-  }).join('');
+  parts.forEach((p, i) => {
+    acc += '/' + p;
+    const cur = i === parts.length - 1;
+    html += `<button class="crumb${cur ? ' current' : ''}" data-path="${esc(acc)}">${esc(p)}</button>`;
+    if (!cur) html += '<span class="crumb-sep">/</span>';
+  });
+  box.innerHTML = html;
   box.querySelectorAll('.crumb').forEach((b) => { b.onclick = () => browse(b.dataset.path); });
 }
 
@@ -629,12 +630,16 @@ function bindSidebar() {
 }
 
 function bindToolbar() {
+  document.getElementById('home').onclick = (e) => {
+    if (e.target.closest('#admin, #theme')) return; // 头部按钮不触发返回首页
+    browse('/');
+  };
   document.getElementById('viewseg').querySelectorAll('button').forEach((b) => {
     b.onclick = () => { state.view = b.dataset.view; localStorage.setItem('elist.view', state.view); render(); };
   });
   document.getElementById('refresh').onclick = () => browse(state.path, { fresh: true });
-  document.getElementById('theme').onclick = toggleTheme;
-  document.getElementById('admin').onclick = () => state.admin ? adminMenu() : login();
+  document.getElementById('theme').onclick = (e) => { e.stopPropagation(); toggleTheme(); };
+  document.getElementById('admin').onclick = (e) => { e.stopPropagation(); state.admin ? adminMenu() : login(); };
 
   // 底部浮动批量条
   const selall = document.getElementById('selall');
@@ -680,6 +685,12 @@ function toggleTheme() {
   root.classList.add('no-trans');
   root.setAttribute('data-theme', next);
   localStorage.setItem('elist.theme', next);
+  // 主题按钮图标与标题随状态切换（亮色显示月亮、暗色显示太阳，表示点后切到另一态）
+  const themeBtn = document.getElementById('theme');
+  if (themeBtn) {
+    themeBtn.innerHTML = next === 'dark' ? ICON.sun : ICON.moon;
+    themeBtn.title = next === 'dark' ? '切换到亮色' : '切换到暗色';
+  }
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('no-trans')));
 }
 

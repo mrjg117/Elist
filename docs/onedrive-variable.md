@@ -70,7 +70,16 @@ SharePoint（挂根站点 + 默认文档库，`user_id` 写 `"sharepoint"`）：
 | `mounts[].title` | 否 | 界面显示的盘名 |
 | `mounts[].cache` | 否 | 覆盖全局 CACHE_CONTROL |
 
-同一应用可挂多个用户：写多个 `AUTH_*`/`MOUNT_*` 对，各自 `user_id` 不同。一份 AUTH 可同时给 OD 和 SP 挂载共用（写两份 MOUNT，SP 那份 `user_id` 填 `"sharepoint"`）。
+同一应用可挂多个用户：`MOUNT_<NAME>` 直接写数组，多个 user 共用一份 AUTH，无需 `users` 包装：
+
+```json
+[
+  { "user_id": "zhangsan@yourorg.onmicrosoft.com", "mounts": [{ "path": "/od", "root": "/", "title": "我的网盘" }] },
+  { "user_id": "lisi@yourorg.onmicrosoft.com",     "mounts": [{ "path": "/sp", "root": "/", "title": "SharePoint" }] }
+]
+```
+
+第二个用户 `user_id` 填 `"sharepoint"` 就是挂根站点默认库，可与 OD 用户共存同一数组。也兼容旧写法 `{"users":[...]}` 和单用户对象。配置表 `.elist.xlsx` 存到第一个非 sharepoint 用户的盘里。
 
 ---
 

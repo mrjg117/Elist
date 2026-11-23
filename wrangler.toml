@@ -23,15 +23,20 @@ run_worker_first = true
 # =====================================================================
 # 配置方案（v4，变量拆分）：
 #   - AUTH_<NAME>：账号机密（type、凭据等）
-#   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
+#   - MOUNT_<NAME>：挂载配置（单对象 / 用户数组 / {users:[...]} 三种写法等价）
 #   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
+#   - 一份 AUTH 可挂多个用户：MOUNT 里写数组，每个用户一个 user_id + mounts
 #
-# AUTH_<NAME> 示例（OneDrive）：
+# AUTH_<NAME> 示例（OneDrive，租户级凭据，一份即可）：
 #   {"type":"onedrive","tenant_id":"<tid>","client_id":"<cid>","cert_thumbprint":"<base64url x5t>","cert_key":"..."}
 #
-# MOUNT_<NAME> 示例：
+# MOUNT_<NAME> 示例（单用户，对象写法）：
 #   {"user_id":"user@org.com","mounts":[{"path":"/od","root":"/","title":"我的网盘"}]}
-# SP 挂根站点：user_id 写 "sharepoint"，mounts 同上
+# MOUNT_<NAME> 示例（多用户同租户，数组写法，共用一份 AUTH）：
+#   [{"user_id":"a@org.com","mounts":[{"path":"/a","root":"/","title":"A"}]},
+#    {"user_id":"b@org.com","mounts":[{"path":"/b","root":"/","title":"B"}]}]
+# SP 挂根站点：某用户的 user_id 写 "sharepoint"，mounts 同上
+# 注意 fields 是 title，不是 name；path/root 不要带前后空格
 #
 # 密码/隐藏配置：统一存放在存储根目录的 .elist.xlsx 文件中
 #   - passwords sheet：路径密码配置
@@ -44,11 +49,24 @@ run_worker_first = true
 #   - CONFIG_PATH：配置文件存储路径（可选，默认 /）
 # =====================================================================
 
-# 公用变量（非敏感，可明文；也可 secret）
+# =====================================================================
+# 变量策略：仓库只放【示例】，真实值一律在 Cloudflare Dashboard 配置。
+#
+# 文件顶部的 keep_vars = true 保证 wrangler deploy 时保留 Dashboard 里
+# 已有的变量，不会被这份配置清掉。所以下面这些示例【全部保持注释】。
+# 关键：一旦取消注释并填了值，deploy 会用这里的值【覆盖】Dashboard 同名
+# 变量——想让后台说了算，就别在 [vars] 里写真实值或占位值。
+#
+# Dashboard 里要配的变量（格式示例，仅作参考）：
+#   SITE_TITLE   = "Elist"
+#   CACHE_CONTROL = "public, max-age=0, must-revalidate"
+#   AUTH_<NAME>  = {"type":"onedrive","tenant_id":"...","client_id":"...",...}  （Secret）
+#   MOUNT_<NAME> = {"user_id":"...","mounts":[{"path":"/","root":"/","title":"..."}]}
+#   CONF_PW / CONFIG_AUTH / CONFIG_PATH 按需
+# =====================================================================
 [vars]
-SITE_TITLE = "Elist"
-# 资产缓存：no-cache 强制浏览器每次校验，部署后刷新即见最新版（避免"看不到改动"）
-CACHE_CONTROL = "public, max-age=0, must-revalidate"
+# SITE_TITLE = "Elist"
+# CACHE_CONTROL = "public, max-age=0, must-revalidate"
 # MOUNT_ORDER = "/od,/s3"          # 根目录盘顺序（逗号分隔）
 # S3_LINK_TTL = "86400"            # S3 下载直链有效期（秒），默认 3600；弱网续传可加大
 

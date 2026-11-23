@@ -1,4 +1,11 @@
-import type { Mount, Env, AuthAccount, MountConfig } from './types';
+import type { Mount, Env, AuthAccount, MountConfig, UserMount } from './types';
+
+/** MOUNT_<NAME> 的三种写法（单对象 / 用户数组 / {users:[...]}）统一归一为用户数组。 */
+function normalizeUsers(cfg: MountConfig): UserMount[] {
+  if (Array.isArray(cfg)) return cfg;
+  if (cfg && typeof cfg === 'object' && 'users' in cfg && Array.isArray(cfg.users)) return cfg.users;
+  return [cfg as UserMount];
+}
 
 /**
  * 从 env 解析多盘配置（v4）。
@@ -43,22 +50,24 @@ export function getMounts(env: Env): Mount[] {
     const auth = authMap.get(name);
     if (!auth || !auth.type) continue;
 
-    // 该账号的鉴权字段（作为每个挂载点的 addition）
+    // 该账号的鉴权字段（作为每个挂载点的 addition），同一 NAME 下所有 user 共用
     const addition: Record<string, any> = { ...auth };
 
-    // 展开挂载点：user_id === 'sharepoint' 走 SP 驱动，否则按 auth.type
-    for (const mp of mountConfig.mounts || []) {
-      const isSP = mountConfig.user_id === 'sharepoint';
-      mounts.push({
-        mount: normalize(mp.path || '/'),
-        root: normalize(mp.root || '/'),
-        driver: isSP ? 'sharepoint' : auth.type,
-        title: mp.title,
-        cache: mp.cache,
-        user_id: mountConfig.user_id,
-        tenant: name,
-        addition,
-      });
+    // 展开每个 user 的挂载点；user_id === 'sharepoint' 走 SP 驱动，否则按 auth.type
+    for (const user of normalizeUsers(mountConfig)) {
+      for (const mp of user.mounts || []) {
+        const isSP = user.user_id === 'sharepoint';
+        mounts.push({
+          mount: normalize(mp.path || '/'),
+          root: normalize(mp.root || '/'),
+          driver: isSP ? 'sharepoint' : auth.type,
+          title: mp.title,
+          cache: mp.cache,
+          user_id: user.user_id,
+          tenant: name,
+          addition,
+        });
+      }
     }
   }
 
@@ -90,6 +99,7 @@ export function findMount(
 
 /** 规范化路径：统一前导 /，去尾斜杠（根除外），解析 .. 防止路径穿越。 */
 export function normalize(path: string): string {
+  path = (path || '').trim(); // 配置里复制粘贴常带首尾空格，统一去掉（不影响文件名中间的空格）
   if (!path.startsWith('/')) path = '/' + path;
   // 解析相对路径段，防止路径穿越
   const parts = path.split('/');

@@ -47,19 +47,37 @@
 
 ## `MOUNT_<NAME>`
 
+`MOUNT_<NAME>` 的值有三种等价写法，代码统一归一为用户数组：
+
+**写法一：单用户对象**（原来的格式）
 ```jsonc
 {
   "user_id": "alice@org.com",  // OneDrive 必填（UPN 或 objectId）；S3 可省；填 "sharepoint" = 挂 SP 根站点
   "mounts": [                  // 必填
     {
       "path": "/alice",        // 实质必填。URL 前缀，决定外网路径；不写会撞根
-      "root": "/",             // 可省，默认 /。盘内起始目录
-      "title": "Alice 的网盘",  // 可省，默认显示 path
+      "root": "/",             // 可省，默认 /。盘内起始目录（不要带前后空格）
+      "title": "Alice 的网盘",  // 可省，默认显示 path。字段名是 title，不是 name
       "cache": "public, max-age=3600" // 可省。覆盖全局 CACHE_CONTROL
     }
   ]
 }
 ```
+
+**写法二：用户数组**（多用户同租户推荐，共用一份 AUTH，不用 `users` 包装）
+```jsonc
+[
+  { "user_id": "alice@org.com", "mounts": [{ "path": "/alice", "root": "/", "title": "Alice" }] },
+  { "user_id": "bob@org.com",   "mounts": [{ "path": "/bob",   "root": "/", "title": "Bob" }] }
+]
+```
+
+**写法三：`users` 包装**（兼容旧格式）
+```jsonc
+{ "users": [ /* 同上数组里的每个用户对象 */ ] }
+```
+
+多用户时配置表 `.elist.xlsx` 存到第一个非 sharepoint 用户的盘里；SP 与 OD 用户可共存于同一数组。
 
 SharePoint 只挂根站点 + 默认文档库，`user_id` 写 `"sharepoint"` 即可，无需站点 ID / 库 ID / host：
 

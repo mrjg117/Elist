@@ -3,9 +3,11 @@
  *
  * 配置架构（v4，变量拆分）：
  *   - AUTH_<NAME>：账号机密（type、凭据等）
- *   - MOUNT_<NAME>：挂载配置（users 数组，每个 user 有 user_id 和 mounts）
+ *   - MOUNT_<NAME>：挂载配置（单对象 / 数组 / {users:[...]} 三种写法等价）
  *   - CONF_PW：xlsx 配置文件密码（可选）
  *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
+ *   - 一份 AUTH 可挂多个 user：MOUNT 里写数组，每个 user 一个 user_id + mounts
+ *   - 配置文件身份：多 user 时取第一个非 sharepoint 的 user
  *
  * 设计要点：所有存储后端（S3 / OneDrive / 未来 GDrive）实现同一 Driver 接口，
  * 对上层完全等价 -> 多盘 = 数据（配置）不是代码。
@@ -45,11 +47,19 @@ export interface AuthAccount {
   secret_access_key?: string; // S3
 }
 
-/** 挂载配置（MOUNT_<NAME> 的值）。 */
-export interface MountConfig {
+/** 单个用户的挂载配置。 */
+export interface UserMount {
   user_id?: string;   // OneDrive 用户 UPN/objectId；'sharepoint' = 挂 SP 根站点；S3 可省
   mounts: MountPoint[];
 }
+
+/**
+ * 挂载配置（MOUNT_<NAME> 的值）。三种写法等价，config.ts 统一归一为数组：
+ *   1. 单用户对象：{ user_id, mounts }
+ *   2. 用户数组：[{ user_id, mounts }, { user_id, mounts }]   ← 多用户推荐，无需 users 包装
+ *   3. users 包装：{ users: [{ user_id, mounts }, ...] }      ← 兼容旧格式
+ */
+export type MountConfig = UserMount | UserMount[] | { users: UserMount[] };
 
 /**
  * dispatch 用的展开挂载项（配置解析阶段由 AUTH_XXX + MOUNT_XXX 配对展开得到）。

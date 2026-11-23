@@ -70,8 +70,9 @@ npm run deploy
 ### 变量拆分原则
 
 - `AUTH_<NAME>`：账号机密（type、凭据等敏感信息）
-- `MOUNT_<NAME>`：挂载配置（users 数组，非敏感）
-- 变量名后缀自动关联：`MOUNT_ZHU` 自动关联 `AUTH_ZHU`
+- `MOUNT_<NAME>`：挂载配置（单对象 / 用户数组 / `{users:[...]}` 三种写法等价，非敏感）
+- 变量名后缀自动关联：`MOUNT_ZHU` 自动关联 `AUTH_ZHU`；一份 AUTH 下可挂多个用户
+- 同一用户的多个目录写在一个 mounts 数组里；同租户多用户写进同一个 MOUNT 的数组，共用一份 AUTH
 
 ### AUTH_<NAME> - 账号机密
 
@@ -123,7 +124,16 @@ SharePoint（同一份凭据挂根站点 + 默认文档库）：
 }
 ```
 
-> 一份 `AUTH_<NAME>` 可挂多个用户：写多对 `AUTH_*`/`MOUNT_*`，各自 `user_id` 不同。SP 挂载复用同一 AUTH，`user_id` 填 `"sharepoint"` 即可。
+多用户同租户共用一份 AUTH：`MOUNT_<NAME>` 直接写数组（不用 `users` 包装）：
+
+```json
+[
+  { "user_id": "alice@org.com", "mounts": [{ "path": "/alice", "root": "/", "title": "Alice" }] },
+  { "user_id": "bob@org.com",   "mounts": [{ "path": "/bob",   "root": "/", "title": "Bob" }] }
+]
+```
+
+也兼容旧写法 `{"users": [ ... ]}` 和单用户对象 `{"user_id": "...", "mounts": [...]}`。SP 挂载把某个用户的 `user_id` 填 `"sharepoint"` 即可，与 OD 用户可共存于同一数组。配置表 `.elist.xlsx` 存到数组里第一个非 sharepoint 用户的盘里。
 
 **顶层字段：**
 

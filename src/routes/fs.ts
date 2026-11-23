@@ -149,6 +149,15 @@ export function getMountUserId(env: Env, accountName: string): string {
   }
 }
 
+/**
+ * 配置文件读写实际使用的驱动名，与 getMounts 里的 SP 判定保持一致：
+ * MOUNT_<NAME> 的 user_id === 'sharepoint' 时走 SP 驱动，否则按 AUTH_<NAME>.type。
+ * 否则只挂 SP 时配置表会被当成 OneDrive 用户 "sharepoint" 去读，永远读不到。
+ */
+export function getConfigDriverName(env: Env, accountName: string, accountType: string): string {
+  return getMountUserId(env, accountName) === 'sharepoint' ? 'sharepoint' : accountType;
+}
+
 /** 加载 .elist.xlsx 配置到内存（首次访问时触发）。
  *  收敛为「单一确定性账号」读取（CONFIG_AUTH > first-onedrive > first-s3 > first），
  *  出网子请求从 N×2 降为 1~2 次，消除多账号遍历导致的 503。
@@ -178,13 +187,14 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       if (!account) return false;
       try {
         const { getDriverClass } = await import('../drivers/registry');
-        const DriverClass = getDriverClass(account.type);
+        const driverName = getConfigDriverName(c.env, name, account.type);
+        const DriverClass = getDriverClass(driverName);
         if (!DriverClass) return false;
         const driver = new DriverClass();
         await driver.init({
           mount: '/',
           root: configPath,
-          driver: account.type,
+          driver: driverName,
           addition: account.auth,
           user_id: getMountUserId(c.env, account.name),
         }, c.env);
@@ -244,14 +254,15 @@ async function getConfigMount(c: Context<{ Bindings: Env }>): Promise<{ driver: 
   if (!targetAccount) return null;
 
   const { getDriverClass } = await import('../drivers/registry');
-  const DriverClass = getDriverClass(targetAccount.type);
+  const driverName = getConfigDriverName(c.env, targetName, targetAccount.type);
+  const DriverClass = getDriverClass(driverName);
   if (!DriverClass) return null;
 
   const driver = new DriverClass();
   await driver.init({
     mount: '/',
     root: configPath,
-    driver: targetAccount.type,
+    driver: driverName,
     addition: targetAccount.auth,
     user_id: getMountUserId(c.env, targetAccount.name),
   }, c.env);

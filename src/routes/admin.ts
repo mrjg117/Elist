@@ -255,7 +255,7 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
 
 // 获取配置存储的 driver
 async function getConfigDriver(env: Env, target: string, configPath: string): Promise<any | null> {
-  const { getAllAuthAccounts, getMountUserId } = await import('./fs');
+  const { getAllAuthAccounts, getMountUserId, getConfigDriverName } = await import('./fs');
   const { getDriverClass } = await import('../drivers/registry');
   
   const accounts = getAllAuthAccounts(env);
@@ -275,14 +275,15 @@ async function getConfigDriver(env: Env, target: string, configPath: string): Pr
   
   if (!targetAccount) return null;
   
-  const DriverClass = getDriverClass(targetAccount.type);
+  const driverName = getConfigDriverName(env, target, targetAccount.type);
+  const DriverClass = getDriverClass(driverName);
   if (!DriverClass) return null;
-  
+
   const driver = new DriverClass();
   await driver.init({
     mount: '/',
     root: configPath,
-    driver: targetAccount.type,
+    driver: driverName,
     addition: targetAccount.auth,
     user_id: getMountUserId(env, targetAccount.name), // OneDrive app-only 必需，缺失导致保存位置全部失败
   }, env);

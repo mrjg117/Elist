@@ -673,10 +673,14 @@ function bindToolbar() {
 }
 
 function toggleTheme() {
-  const cur = document.documentElement.getAttribute('data-theme');
+  const root = document.documentElement;
+  const cur = root.getAttribute('data-theme');
   const next = cur === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
+  // 切换瞬间临时关掉所有过渡，避免按钮/行/卡片的颜色在两套主题间渐变导致闪烁
+  root.classList.add('no-trans');
+  root.setAttribute('data-theme', next);
   localStorage.setItem('elist.theme', next);
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('no-trans')));
 }
 
 // 网格图片缩略图懒加载

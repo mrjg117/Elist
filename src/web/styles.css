@@ -34,7 +34,7 @@
   --ico-doc: #3b82f6;
   --ico-code: #64748b;
   --ico-text: #94a3b8;
-  --home: #eab308;
+  --home: #334155;
   --t1: #3b82f6; --t2: #0d9488; --t3: #7c3aed; --t4: #d97706;
   --t5: #e11d48; --t6: #16a34a; --t7: #4f46e5; --t8: #0891b2;
   --shadow: 0 18px 50px rgba(31, 58, 110, 0.10);
@@ -81,7 +81,7 @@
   --ico-doc: #5b9dff;
   --ico-code: #94a3b8;
   --ico-text: #6b7890;
-  --home: #facc15;
+  --home: #f8fafc;
   --t1: #5b9dff; --t2: #2dd4bf; --t3: #a78bfa; --t4: #fbbf24;
   --t5: #fb7185; --t6: #34d399; --t7: #818cf8; --t8: #22d3ee;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
@@ -96,9 +96,11 @@ body {
   font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
 }
 .boot { display: grid; place-items: center; height: 100vh; color: var(--text-dim); }
-#app { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 20px; overflow: hidden; }
+/* 主题切换瞬间关掉过渡，避免颜色渐变闪烁（toggleTheme 里短暂加 no-trans） */
+html.no-trans *, html.no-trans *::before, html.no-trans *::after { transition: none !important; }
+#app { display: flex; align-items: center; justify-content: center; height: 100vh; padding: 8px; overflow: hidden; }
 .layout {
-  display: flex; width: 100%; max-width: 1240px; height: min(820px, calc(100vh - 40px));
+  display: flex; width: 100%; max-width: none; height: calc(100vh - 16px);
   min-height: 0; background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 14px; overflow: hidden; box-shadow: var(--shadow);
 }

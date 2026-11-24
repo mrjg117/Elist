@@ -6,7 +6,7 @@
  *   - 所有配置检查（密码、隐藏、登录等）走内存 Map（< 1ms）
  *   - 修改配置时先改内存，定期回写 xlsx
  *   - 清理缓存按钮：先回写 xlsx，再清内存
- *   - 支持加密（使用 CONF_PW 环境变量）
+ *   - 配置表以明文 xlsx 生成，方便用 Excel/WPS 直接编辑（读端仍兼容旧加密表）
  *
  * xlsx 结构（表名/表头全中文，由本模块生成或覆盖）：
  *   密码：路径 | 密码 | 提示
@@ -15,7 +15,7 @@
  */
 
 import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
-import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
+import { decryptWorkbook } from 'ooxml-encryption';
 
 /**
  * 本地路径归一化（不依赖 config.ts，避免循环引用）。
@@ -56,14 +56,6 @@ const data: ConfigData = {
 
 /** 管理员密码在「配置」表中的固定键名。 */
 export const ADMIN_PASSWORD_KEY = '管理员密码';
-
-/** 由 loadXlsxConfig 注入的 ADMIN_PW 环境变量（Dashboard secret，可靠来源）。 */
-let envAdminPw = '';
-
-/** 注入 ADMIN_PW（在配置加载入口调用）。 */
-export function setEnvAdminPw(pw: string): void {
-  envAdminPw = (pw || '').trim();
-}
 
 /** 判断 xlsx 二进制是否为加密文件（OLE 复合文档头 D0 CF 11 E0 A1 B1 1A E1）。 */
 export function isEncrypted(buffer: ArrayBuffer): boolean {
@@ -206,8 +198,8 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
   data.dirty = true;
 }
 
-/** 将内存配置生成 xlsx 二进制（支持加密） */
-export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
+/** 将内存配置生成 xlsx 二进制（明文；配置表用 Excel/WPS 编辑后必须能被稳定读回，故不加密） */
+export async function generateXlsx(): Promise<ArrayBuffer> {
   // 生成前确保管理员密码键已存在，自动建表时也会带上空值键
   ensureDefaultConfig();
 
@@ -244,15 +236,7 @@ export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
   // 「配置」表的项目名（第 0 列）是固定 key（如 管理员密码），锁定防误改；只留「值」列（第 1 列）可填。
   const protectedSheets = new Set(['密码', '隐藏', '配置']);
   const unlockCols = new Map([['配置', new Set([1])]]);
-  const xlsxBuffer = await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1, unlockCols });
-
-  // 如果提供了密码，加密
-  if (password) {
-    const encrypted = await encryptWorkbook(new Uint8Array(xlsxBuffer), password);
-    return encrypted.buffer as ArrayBuffer;
-  }
-
-  return xlsxBuffer;
+  return await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1, unlockCols });
 }
 
 /** 检查是否已加载（文件层：表已读到/已建，但可能是空的未配置表） */
@@ -266,8 +250,6 @@ export function isLoaded(): boolean {
  * 避免删表/首跑后空表被当成有效配置导致全部挂载裸奔。
  */
 export function isConfigured(): boolean {
-  // ADMIN_PW 环境变量是可靠来源：设了就算已配置，不受 xlsx 解密失败影响。
-  if (envAdminPw) return true;
   return data.loaded && !!(data.config.get(ADMIN_PASSWORD_KEY) || '');
 }
 
@@ -347,18 +329,6 @@ export function getAllHidden(): string[] {
 /** 获取配置值 */
 export function getConfig(key: string): string | null {
   return data.config.get(key) || null;
-}
-
-/**
- * 获取管理员密码（所有鉴权统一入口）。
- * 优先环境变量 ADMIN_PW（Dashboard secret，可靠，不受 xlsx 加密/编辑影响），
- * 未设置时才回退到配置表里的「管理员密码」。
- * 这样即使 Excel/WPS 重存加密表导致解密失败，也能靠环境变量正常登录。
- */
-export function getAdminPassword(env?: { ADMIN_PW?: string }): string {
-  const fromEnv = ((env?.ADMIN_PW ?? envAdminPw) || '').trim();
-  if (fromEnv) return fromEnv;
-  return (data.config.get(ADMIN_PASSWORD_KEY) || '').trim();
 }
 
 /** 设置配置值 */

@@ -62,7 +62,7 @@ async function isAuthenticated(c: Context<{ Bindings: Env }>): Promise<boolean> 
   const headerPw = c.req.header('X-Admin-Password');
   if (headerPw) {
     try { await loadXlsxConfig(c, false); } catch { /* 配置加载失败按未授权处理 */ }
-    const adminPassword = xlsxConfig.getAdminPassword(c.env);
+    const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
     if (adminPassword && constantTimeCompare(headerPw, adminPassword)) return true;
   }
   return false;
@@ -91,8 +91,8 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
   // query 中的 next 兜底（退出链接走 query）
   next = next || c.req.query('next') || undefined;
 
-  // 管理员密码：优先 ADMIN_PW 环境变量，兜底 xlsx 配置表
-  const adminPassword = xlsxConfig.getAdminPassword(c.env);
+  // 从 xlsx 配置获取管理员密码（ensureDefaultConfig 保证「管理员密码」键恒存在，空值即「未设置」）
+  const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
   if (!adminPassword) {
     return c.json({ error: '密码未设置' }, 401);
   }
@@ -223,8 +223,7 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
   }
   
   const configPath = c.env.CONFIG_PATH || '/';
-  const xlsxPassword = c.env.CONF_PW;
-  const content = await xlsxConfig.generateXlsx(xlsxPassword);
+  const content = await xlsxConfig.generateXlsx();
 
   // 收敛保存位置：优先写回「刚读到 .elist.xlsx 的账号」(多账号下保证读=写同一处)，
   // 再回退 configAuth -> first-onedrive -> first-s3 -> 第一个存储

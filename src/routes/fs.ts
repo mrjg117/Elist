@@ -173,9 +173,6 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
 
   // 创建加载 Promise 并赋值给 pendingLoad
   pendingLoad = (async () => {
-    // 注入 ADMIN_PW（可靠来源）：即使 xlsx 解密失败，鉴权与门禁仍能工作。
-    xlsxConfig.setEnvAdminPw(c.env.ADMIN_PW || '');
-
     // fresh 重载从零开始：清空 isolate 内存里的旧配置。
     // 否则删表后重建空表时，generateXlsx 会把旧密码/旧隐藏规则写回新表，门禁按旧规则放行（裸奔）。
     if (fresh) xlsxConfig.clearAll();
@@ -187,9 +184,6 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       console.warn('loadXlsxConfig: 无可用存储账号，配置为空（失败安全）');
       return;
     }
-
-    // 文件存在但读取/解密失败时置位：绝不能走「自动建表」把用户填好的表覆盖成空表。
-    let readFailed = false;
 
     // 读取单个账号的 .elist.xlsx；成功解析则记入 lastConfigAccount（读=写一致）。
     const readFrom = async (name: string): Promise<boolean> => {
@@ -210,13 +204,12 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
         }, c.env);
         const content = await driver.readBinary('/.elist.xlsx');
         if (content) {
-          // 文件存在：解析失败（多为解密对不上）是致命错误，标记后跳过建表，
-          // 避免用空框架表覆盖用户填好密码的真实配置。
+          // 解析失败（如旧加密表解密对不上）按「无有效表」处理，继续回退/重建，
+          // 让明文框架表覆盖掉读不了的旧表——用户设计：不兼容旧格式，直接覆盖。
           try {
             await xlsxConfig.parseXlsx(content, c.env.CONF_PW);
           } catch (e: any) {
-            readFailed = true;
-            console.error('loadXlsxConfig: .elist.xlsx 读取/解密失败（未覆盖原表）:', e?.message || e);
+            console.error('loadXlsxConfig: .elist.xlsx 读取失败，将按空表重建:', e?.message || e);
             return false;
           }
           lastConfigAccount = name;
@@ -224,7 +217,6 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
         }
         return false; // 该账号无配置文件，可继续回退
       } catch (e) {
-        readFailed = true;
         console.error('loadXlsxConfig read failed for', name, e);
         return false;
       }
@@ -246,15 +238,8 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       }
     }
 
-    // 3) 全账号均无配置文件：自动创建带框架的空配置表。
-    //    但若期间有文件存在却读取/解密失败（readFailed），绝不建表——否则会用空表覆盖
-    //    用户填好密码的真实配置，造成「填一次密码下次登录就没了」的死循环。
-    if (readFailed) {
-      xlsxConfig.markLoaded();
-      console.error('loadXlsxConfig: 配置文件存在但无法读取，跳过自动建表以免覆盖；请检查 CONF_PW 或设置 ADMIN_PW');
-      return;
-    }
-
+    // 3) 全账号均无有效配置文件：自动创建带框架的明文配置表。
+    //    读不了的旧加密表也走这里，被新表覆盖（用户设计：不兼容旧格式，直接覆盖）。
     const primaryName = getConfigAccount(c)!;
     const account = accounts.find((a) => a.name === primaryName);
     if (!account) return;
@@ -268,7 +253,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
         mount: '/', root: configPath, driver: driverName,
         addition: account.auth, user_id: getMountUserId(c.env, account.name),
       }, c.env);
-      const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
+      const content = await xlsxConfig.generateXlsx();
       await driver.writeBinary('/.elist.xlsx', content);
       lastConfigAccount = primaryName;
       xlsxConfig.markLoaded();
@@ -369,7 +354,7 @@ async function isAdminRequest(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const headerPw = c.req.header('X-Admin-Password');
   if (!headerPw) return false;
   try { await loadXlsxConfig(c, false); } catch { return false; }
-  const adminPassword = xlsxConfig.getAdminPassword(c.env);
+  const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
   return !!adminPassword && constantTimeCompare(headerPw, adminPassword);
 }
 
@@ -566,8 +551,7 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
   const { driver, rest } = configMount;
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
 
-  const xlsxPassword = c.env.CONF_PW;
-  const content = await xlsxConfig.generateXlsx(xlsxPassword);
+  const content = await xlsxConfig.generateXlsx();
   await driver.writeBinary(xlsxPath, content);
 
   xlsxConfig.clearDirty();
@@ -585,8 +569,7 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
     if (configMount) {
       const { driver, rest } = configMount;
       const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-      const xlsxPassword = c.env.CONF_PW;
-      const content = await xlsxConfig.generateXlsx(xlsxPassword);
+      const content = await xlsxConfig.generateXlsx();
       await driver.writeBinary(xlsxPath, content);
     }
   }

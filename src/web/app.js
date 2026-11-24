@@ -784,7 +784,7 @@ async function login() {
   } catch (e) {
     if (e.message === '密码未设置') {
       alertModal('密码未设置',
-        '建议在 Dashboard 设一个环境变量 ADMIN_PW 作为管理员密码（最可靠，无需编辑加密表格）。或在配置表 .elist.xlsx「配置」工作表的「管理员密码」右侧填值——注意用 Excel/WPS 重存加密表可能导致 CONF_PW 对不上而读不到。',
+        '请在配置表 .elist.xlsx「配置」工作表的「管理员密码」右侧单元格填入密码并保存，再回来登录。表为明文，可用 Excel/WPS 直接编辑；保存后若仍提示未设置，请删掉旧表重新登录生成新表。',
         'warn');
     } else if (e.message === '密码错误') {
       alertModal('登录失败', '密码错误，请重试。', 'danger');

@@ -62,6 +62,7 @@ async function isAuthenticated(c: Context<{ Bindings: Env }>): Promise<boolean> 
   const headerPw = c.req.header('X-Admin-Password');
   if (headerPw) {
     try { await loadXlsxConfig(c, false); } catch { /* 配置加载失败按未授权处理 */ }
+    if (!xlsxConfig.isConfigured()) return false;
     const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
     if (adminPassword && constantTimeCompare(headerPw, adminPassword)) return true;
   }
@@ -92,7 +93,7 @@ export async function handleLogin(c: Context<{ Bindings: Env }>) {
   next = next || c.req.query('next') || undefined;
 
   // 从 xlsx 配置获取管理员密码（ensureDefaultConfig 保证「管理员密码」键恒存在，空值即「未设置」）
-  const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
+  const adminPassword = xlsxConfig.isConfigured() ? (xlsxConfig.getConfig('管理员密码') || '') : '';
   if (!adminPassword) {
     return c.json({ error: '密码未设置' }, 401);
   }

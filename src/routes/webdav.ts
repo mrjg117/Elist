@@ -78,6 +78,7 @@ async function isWebdavAdmin(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const cookiePw = getCookie(c, 'elist_admin') ?? undefined;
   const pw = headerPw || basicPw || cookiePw;
   if (!pw) return false;
+  if (!xlsxConfig.isConfigured()) return false;
   const expected = xlsxConfig.getConfig('管理员密码');
   return !!expected && constantTimeCompare(pw, expected);
 }
@@ -267,7 +268,7 @@ export async function webdavHandler(c: Context<{ Bindings: Env }>) {
 
   // 写操作需要管理员密码
   const adminPassword = extractAdminPassword(c);
-  const expectedPassword = xlsxConfig.getConfig('管理员密码');
+  const expectedPassword = xlsxConfig.isConfigured() ? xlsxConfig.getConfig('管理员密码') : null;
   
   if (!adminPassword || !expectedPassword || !constantTimeCompare(adminPassword, expectedPassword)) {
     return c.body(null, 401, {

@@ -15,7 +15,9 @@
  */
 
 import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
-import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
+// 内置加密模块：与原库同源，但把 Agile spinCount 从 100000 降到 100（性价比点），
+// 避免边缘函数生成/解密配置表时超出 CPU 预算返回 503；Excel/WPS 仍按文件声明读取。
+import { decryptWorkbook, encryptWorkbook } from './ooxml-encryption/index.js';
 
 /**
  * 本地路径归一化（不依赖 config.ts，避免循环引用）。
@@ -71,17 +73,25 @@ export function ensureDefaultConfig(): void {
   }
 }
 
-/** 从 xlsx 二进制数据解析配置（支持加密） */
+/** 按表名优先、表头签名兜底定位工作表；不依赖 sheet 文件顺序。 */
+function pickSheet(sheets: Map<string, string[][]>, name: string, headers: string[]): string[][] | undefined {
+  const matches = (rows?: string[][]) => {
+    const h = (rows?.[0] || []).map((v) => (v || '').trim());
+    return h.length === headers.length && headers.every((v, i) => h[i] === v);
+  };
+  const byName = sheets.get(name);
+  if (matches(byName)) return byName;
+  for (const rows of sheets.values()) if (matches(rows)) return rows;
+  return undefined;
+}
+
+/** 从 xlsx 二进制数据解析配置（支持加密）。解析到临时结构，成功才整体替换内存。 */
 export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
   let xlsxBuffer = buffer;
 
-  // 如果文件是加密的（OLE 复合文档头 D0 CF 11 E0），必须先解密。
-  // 解密失败不再静默回退：加密二进制当 xlsx 解析会得到空表 + loaded=true，
-  // 伪装成「密码未设置」，掩盖真实原因。宁可抛出让上层明确报错。
+  // 加密文件先解密。解密失败直接抛出，禁止当成空表蒙混过关。
   if (isEncrypted(buffer)) {
-    if (!password) {
-      throw new Error('配置文件已加密，但未设置 CONF_PW，无法解密');
-    }
+    if (!password) throw new Error('配置文件已加密，但未设置 CONF_PW，无法解密');
     try {
       const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
       xlsxBuffer = decrypted.buffer as ArrayBuffer;
@@ -90,112 +100,50 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
-  // 使用最小化模块解析
   const sheets = await parseXlsxMinimal(xlsxBuffer);
+  const passwords = new Map<string, { password: string; hint?: string }>();
+  const hidden = new Set<string>();
+  const config = new Map<string, string>();
 
-  // Sheet1: 密码
-  const pwSheet = sheets.get('密码');
+  // 工作表按「中文标签 + 表头签名」识别；表头签名兜底，防止用户改标签后失效。
+  const pwSheet = pickSheet(sheets, '密码', ['路径', '密码', '提示']);
   if (pwSheet) {
-    data.passwords.clear();
     for (let i = 1; i < pwSheet.length; i++) {
       const row = pwSheet[i];
       if (!row || row.length < 2) continue;
       const path = row[0];
       const pwd = row[1];
       if (!path || !pwd) continue;
-      const hint = row[2];
-      data.passwords.set(normPath(path), { password: pwd, hint: hint || undefined });
+      passwords.set(normPath(path), { password: pwd, hint: row[2] || undefined });
     }
   }
 
-  // Sheet2: 隐藏
-  const hiddenSheet = sheets.get('隐藏');
+  const hiddenSheet = pickSheet(sheets, '隐藏', ['路径']);
   if (hiddenSheet) {
-    data.hidden.clear();
     for (let i = 1; i < hiddenSheet.length; i++) {
-      const row = hiddenSheet[i];
-      if (!row || row.length < 1) continue;
-      const path = row[0];
-      if (!path) continue;
-      data.hidden.add(normPath(path));
+      const path = hiddenSheet[i]?.[0];
+      if (path) hidden.add(normPath(path));
     }
   }
 
-  // Sheet3: 配置
-  const configSheet = sheets.get('配置');
+  const configSheet = pickSheet(sheets, '配置', ['配置项', '值']);
   if (configSheet) {
-    data.config.clear();
     for (let i = 1; i < configSheet.length; i++) {
       const row = configSheet[i];
       if (!row || row.length < 1) continue;
       const key = (row[0] || '').trim();
-      if (!key) continue;
-      data.config.set(key, row[1] || '');
+      if (key) config.set(key, row[1] || '');
     }
   }
+  // 管理员密码固定取第 2 行第 2 列，不靠中文 key 匹配（避免富文本拆词/标签改动）。
+  config.set(ADMIN_PASSWORD_KEY, (configSheet?.[1]?.[1] || '').trim());
 
-  // 缺管理员密码键则补空值（标脏以便后续落盘）
-  ensureDefaultConfig();
-
+  // 全部解析成功后才替换内存：读失败不会清掉旧配置，也不会把旧配置写回新表。
+  data.passwords = passwords;
+  data.hidden = hidden;
+  data.config = config;
   data.loaded = true;
   data.dirty = false;
-}
-
-/**
- * 合并解析（不清空已有配置，仅 add）。用于多账号 .elist.xlsx 配置并集读取，
- * 彻底消除「读 A 写 B / 配置散落多账号」导致隐藏项读不到（隐藏盘仍显示）。
- * 与 parseXlsx 不同：不 ensureDefaultConfig、不重置 loaded/dirty，只把内容并入现有 Map/Set。
- */
-export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
-  let xlsxBuffer = buffer;
-
-  if (isEncrypted(buffer)) {
-    if (!password) throw new Error('配置文件已加密，但未设置 CONF_PW，无法解密');
-    try {
-      const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
-      xlsxBuffer = decrypted.buffer as ArrayBuffer;
-    } catch (e: any) {
-      throw new Error(`配置文件解密失败（请检查 CONF_PW）：${e?.message || e}`);
-    }
-  }
-
-  const sheets = await parseXlsxMinimal(xlsxBuffer);
-
-  const pwSheet = sheets.get('密码');
-  if (pwSheet) {
-    for (let i = 1; i < pwSheet.length; i++) {
-      const row = pwSheet[i];
-      if (!row || row.length < 2) continue;
-      const path = row[0];
-      const pwd = row[1];
-      if (!path || !pwd) continue;
-      data.passwords.set(normPath(path), { password: pwd, hint: row[2] || undefined });
-    }
-  }
-
-  const hiddenSheet = sheets.get('隐藏');
-  if (hiddenSheet) {
-    for (let i = 1; i < hiddenSheet.length; i++) {
-      const row = hiddenSheet[i];
-      if (!row || row.length < 1) continue;
-      const path = row[0];
-      if (!path) continue;
-      data.hidden.add(normPath(path));
-    }
-  }
-
-  const configSheet = sheets.get('配置');
-  if (configSheet) {
-    for (let i = 1; i < configSheet.length; i++) {
-      const row = configSheet[i];
-      if (!row || row.length < 1) continue;
-      const key = (row[0] || '').trim();
-      if (!key) continue;
-      data.config.set(key, row[1] || '');
-    }
-  }
-
-  data.dirty = true;
 }
 
 /** 将内存配置生成 xlsx 二进制（支持加密） */
@@ -261,9 +209,15 @@ export function isConfigured(): boolean {
   return data.loaded && !!(data.config.get(ADMIN_PASSWORD_KEY) || '');
 }
 
-/** 标记为已加载（用于没有 .elist.xlsx 的情况） */
+/** 标记为已加载（表已生成/读到，内容可能为空） */
 export function markLoaded(): void {
   data.loaded = true;
+}
+
+/** 读取/建表失败：只置未加载，不清内存。门禁按 isConfigured 失败安全隐藏。 */
+export function markUnavailable(): void {
+  data.loaded = false;
+  data.dirty = false;
 }
 
 /** 检查是否有未保存的修改 */

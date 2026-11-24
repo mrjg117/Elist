@@ -98,6 +98,9 @@ export function getAllAuthAccounts(env: Env): Array<{ name: string; type: string
 
 // in-flight 去重：防止并发请求重复加载配置
 let pendingLoad: Promise<void> | null = null;
+// 加载失败后的短暂冷却：避免删表/远端 5xx 时并发请求重复打 Graph。
+let lastLoadFailureAt = 0;
+const LOAD_RETRY_MS = 5000;
 // 记录上次实际读到 .elist.xlsx 的账号名，保存时优先写回同一位置，
 // 避免多账号下「读 A 账号 / 写 B 账号」导致隐藏/密码配置读不到（根目录仍显示已隐藏盘）。
 let lastConfigAccount: string | null = null;
@@ -165,6 +168,7 @@ export function getConfigDriverName(env: Env, accountName: string, accountType: 
  *  仅当全账号均无配置文件（首跑）时，在确定性账号自动创建空白配置。 */
 export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = false): Promise<void> {
   if (xlsxConfig.isLoaded() && !fresh) return;
+  if (!fresh && Date.now() - lastLoadFailureAt < LOAD_RETRY_MS) return;
 
   // in-flight 去重：如果已有加载任务在进行，直接复用
   if (pendingLoad && !fresh) {
@@ -173,14 +177,11 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
 
   // 创建加载 Promise 并赋值给 pendingLoad
   pendingLoad = (async () => {
-    // fresh 重载从零开始：清空 isolate 内存里的旧配置。
-    // 否则删表后重建空表时，generateXlsx 会把旧密码/旧隐藏规则写回新表，门禁按旧规则放行（裸奔）。
-    if (fresh) xlsxConfig.clearAll();
-
     const configPath = c.env.CONFIG_PATH || '/';
     const accounts = getAllAuthAccounts(c.env);
     if (accounts.length === 0) {
       xlsxConfig.markLoaded();
+      lastLoadFailureAt = 0;
       console.warn('loadXlsxConfig: 无可用存储账号，配置为空（失败安全）');
       return;
     }
@@ -213,6 +214,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
             return false;
           }
           lastConfigAccount = name;
+          lastLoadFailureAt = 0;
           return true;
         }
         return false; // 该账号无配置文件，可继续回退
@@ -238,28 +240,37 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       }
     }
 
-    // 3) 全账号均无有效配置文件：自动创建带框架的明文配置表。
-    //    读不了的旧加密表也走这里，被新表覆盖（用户设计：不兼容旧格式，直接覆盖）。
+    // 3) 全账号均无有效配置文件：自动创建统一框架表。
+    //    仅在确认为空表时清空内存，避免把旧密码/隐藏规则写回新表。
     const primaryName = getConfigAccount(c)!;
     const account = accounts.find((a) => a.name === primaryName);
-    if (!account) return;
+    if (!account) {
+      xlsxConfig.markUnavailable();
+      lastLoadFailureAt = Date.now();
+      return;
+    }
     try {
       const { getDriverClass } = await import('../drivers/registry');
       const driverName = getConfigDriverName(c.env, primaryName, account.type);
       const DriverClass = getDriverClass(driverName);
-      if (!DriverClass) return;
+      if (!DriverClass) throw new Error(`driver ${driverName} not found`);
       const driver = new DriverClass();
       await driver.init({
         mount: '/', root: configPath, driver: driverName,
         addition: account.auth, user_id: getMountUserId(c.env, account.name),
       }, c.env);
+      xlsxConfig.clearAll(); // 新表 = 新配置，绝不回填旧内存
       const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
       await driver.writeBinary('/.elist.xlsx', content);
+      xlsxConfig.clearDirty();
       lastConfigAccount = primaryName;
       xlsxConfig.markLoaded();
+      lastLoadFailureAt = 0;
       console.log('loadXlsxConfig: 未找到配置表，已在', primaryName, '自动创建框架表 /.elist.xlsx');
     } catch (e) {
-      // 建表失败：保持未加载，失败安全由 acl.ts 处理
+      // 建表失败：置未加载（门禁失败安全隐藏），5s 内不重复打远端
+      xlsxConfig.markUnavailable();
+      lastLoadFailureAt = Date.now();
       console.error('loadXlsxConfig: 自动创建配置表失败', e);
     }
   })();
@@ -354,6 +365,7 @@ async function isAdminRequest(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const headerPw = c.req.header('X-Admin-Password');
   if (!headerPw) return false;
   try { await loadXlsxConfig(c, false); } catch { return false; }
+  if (!xlsxConfig.isConfigured()) return false;
   const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
   return !!adminPassword && constantTimeCompare(headerPw, adminPassword);
 }

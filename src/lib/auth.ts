@@ -32,8 +32,8 @@ export async function requireAdmin(c: Context<{ Bindings: Env }>): Promise<any |
     return c.json({ error: '需要管理员密码' }, 401, challenge);
   }
 
-  // 从 xlsx 配置获取管理员密码
-  const expectedPassword = xlsxConfig.getConfig('管理员密码');
+  // 从 xlsx 配置获取管理员密码；配置不可用时不认旧内存值，失败安全
+  const expectedPassword = xlsxConfig.isConfigured() ? xlsxConfig.getConfig('管理员密码') : null;
   if (!expectedPassword || !constantTimeCompare(adminPassword, expectedPassword)) {
     // 密码错误：同样回 401 + challenge，让客户端重新弹出登录框（Basic 语义）。
     return c.json({ error: '管理员密码错误' }, 401, challenge);

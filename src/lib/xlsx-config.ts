@@ -57,6 +57,20 @@ const data: ConfigData = {
 /** 管理员密码在「配置」表中的固定键名。 */
 export const ADMIN_PASSWORD_KEY = '管理员密码';
 
+/** 由 loadXlsxConfig 注入的 ADMIN_PW 环境变量（Dashboard secret，可靠来源）。 */
+let envAdminPw = '';
+
+/** 注入 ADMIN_PW（在配置加载入口调用）。 */
+export function setEnvAdminPw(pw: string): void {
+  envAdminPw = (pw || '').trim();
+}
+
+/** 判断 xlsx 二进制是否为加密文件（OLE 复合文档头 D0 CF 11 E0 A1 B1 1A E1）。 */
+export function isEncrypted(buffer: ArrayBuffer): boolean {
+  const b = new Uint8Array(buffer);
+  return b.length >= 8 && b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0;
+}
+
 /** 确保管理员密码键存在（缺失则补空值并标脏，下次保存落盘）。 */
 export function ensureDefaultConfig(): void {
   if (!data.config.has(ADMIN_PASSWORD_KEY)) {
@@ -69,14 +83,18 @@ export function ensureDefaultConfig(): void {
 export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
   let xlsxBuffer = buffer;
 
-  // 如果提供了密码，先解密
-  if (password) {
+  // 如果文件是加密的（OLE 复合文档头 D0 CF 11 E0），必须先解密。
+  // 解密失败不再静默回退：加密二进制当 xlsx 解析会得到空表 + loaded=true，
+  // 伪装成「密码未设置」，掩盖真实原因。宁可抛出让上层明确报错。
+  if (isEncrypted(buffer)) {
+    if (!password) {
+      throw new Error('配置文件已加密，但未设置 CONF_PW，无法解密');
+    }
     try {
       const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
       xlsxBuffer = decrypted.buffer as ArrayBuffer;
-    } catch (e) {
-      // 解密失败，使用原始 buffer
-      xlsxBuffer = buffer;
+    } catch (e: any) {
+      throw new Error(`配置文件解密失败（CONF_PW 与文件加密密码不一致，或 Excel/WPS 重存后加密格式不兼容）：${e?.message || e}`);
     }
   }
 
@@ -139,12 +157,13 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
 export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise<void> {
   let xlsxBuffer = buffer;
 
-  if (password) {
+  if (isEncrypted(buffer)) {
+    if (!password) throw new Error('配置文件已加密，但未设置 CONF_PW，无法解密');
     try {
       const decrypted = await decryptWorkbook(new Uint8Array(buffer), password);
       xlsxBuffer = decrypted.buffer as ArrayBuffer;
-    } catch {
-      xlsxBuffer = buffer;
+    } catch (e: any) {
+      throw new Error(`配置文件解密失败（请检查 CONF_PW）：${e?.message || e}`);
     }
   }
 
@@ -247,6 +266,8 @@ export function isLoaded(): boolean {
  * 避免删表/首跑后空表被当成有效配置导致全部挂载裸奔。
  */
 export function isConfigured(): boolean {
+  // ADMIN_PW 环境变量是可靠来源：设了就算已配置，不受 xlsx 解密失败影响。
+  if (envAdminPw) return true;
   return data.loaded && !!(data.config.get(ADMIN_PASSWORD_KEY) || '');
 }
 
@@ -326,6 +347,18 @@ export function getAllHidden(): string[] {
 /** 获取配置值 */
 export function getConfig(key: string): string | null {
   return data.config.get(key) || null;
+}
+
+/**
+ * 获取管理员密码（所有鉴权统一入口）。
+ * 优先环境变量 ADMIN_PW（Dashboard secret，可靠，不受 xlsx 加密/编辑影响），
+ * 未设置时才回退到配置表里的「管理员密码」。
+ * 这样即使 Excel/WPS 重存加密表导致解密失败，也能靠环境变量正常登录。
+ */
+export function getAdminPassword(env?: { ADMIN_PW?: string }): string {
+  const fromEnv = ((env?.ADMIN_PW ?? envAdminPw) || '').trim();
+  if (fromEnv) return fromEnv;
+  return (data.config.get(ADMIN_PASSWORD_KEY) || '').trim();
 }
 
 /** 设置配置值 */

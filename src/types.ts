@@ -108,5 +108,7 @@ export interface Env {
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
   CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）
   CONFIG_PATH?: string;    // 配置文件存储路径（存储内相对路径，如 / 或 /config）
+  ADMIN_PW?: string;       // 管理员密码（Dashboard secret，权威来源，优先级高于配置表，避免编辑加密表的坑）
+  CONF_PW?: string;        // 配置文件（.elist.xlsx）加密密码；改表后 Excel/WPS 重存可能不兼容，建议改用 ADMIN_PW
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

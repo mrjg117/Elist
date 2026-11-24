@@ -173,6 +173,9 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
 
   // 创建加载 Promise 并赋值给 pendingLoad
   pendingLoad = (async () => {
+    // 注入 ADMIN_PW（可靠来源）：即使 xlsx 解密失败，鉴权与门禁仍能工作。
+    xlsxConfig.setEnvAdminPw(c.env.ADMIN_PW || '');
+
     // fresh 重载从零开始：清空 isolate 内存里的旧配置。
     // 否则删表后重建空表时，generateXlsx 会把旧密码/旧隐藏规则写回新表，门禁按旧规则放行（裸奔）。
     if (fresh) xlsxConfig.clearAll();
@@ -184,6 +187,9 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       console.warn('loadXlsxConfig: 无可用存储账号，配置为空（失败安全）');
       return;
     }
+
+    // 文件存在但读取/解密失败时置位：绝不能走「自动建表」把用户填好的表覆盖成空表。
+    let readFailed = false;
 
     // 读取单个账号的 .elist.xlsx；成功解析则记入 lastConfigAccount（读=写一致）。
     const readFrom = async (name: string): Promise<boolean> => {
@@ -204,12 +210,21 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
         }, c.env);
         const content = await driver.readBinary('/.elist.xlsx');
         if (content) {
-          await xlsxConfig.parseXlsx(content, c.env.CONF_PW);
+          // 文件存在：解析失败（多为解密对不上）是致命错误，标记后跳过建表，
+          // 避免用空框架表覆盖用户填好密码的真实配置。
+          try {
+            await xlsxConfig.parseXlsx(content, c.env.CONF_PW);
+          } catch (e: any) {
+            readFailed = true;
+            console.error('loadXlsxConfig: .elist.xlsx 读取/解密失败（未覆盖原表）:', e?.message || e);
+            return false;
+          }
           lastConfigAccount = name;
           return true;
         }
         return false; // 该账号无配置文件，可继续回退
       } catch (e) {
+        readFailed = true;
         console.error('loadXlsxConfig read failed for', name, e);
         return false;
       }
@@ -231,9 +246,15 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       }
     }
 
-    // 3) 全账号均无配置文件：自动创建带框架的空配置表（仅表头 + 空填写区，无数据），
-    //    让用户打开表就知道管理员密码/隐藏/密码该填在哪。写=读同一确定性账号。
-    //    建表后 markLoaded，此时密码为空，登录接口会提示"密码未设置"，用户填表保存后即可登录。
+    // 3) 全账号均无配置文件：自动创建带框架的空配置表。
+    //    但若期间有文件存在却读取/解密失败（readFailed），绝不建表——否则会用空表覆盖
+    //    用户填好密码的真实配置，造成「填一次密码下次登录就没了」的死循环。
+    if (readFailed) {
+      xlsxConfig.markLoaded();
+      console.error('loadXlsxConfig: 配置文件存在但无法读取，跳过自动建表以免覆盖；请检查 CONF_PW 或设置 ADMIN_PW');
+      return;
+    }
+
     const primaryName = getConfigAccount(c)!;
     const account = accounts.find((a) => a.name === primaryName);
     if (!account) return;
@@ -348,7 +369,7 @@ async function isAdminRequest(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const headerPw = c.req.header('X-Admin-Password');
   if (!headerPw) return false;
   try { await loadXlsxConfig(c, false); } catch { return false; }
-  const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
+  const adminPassword = xlsxConfig.getAdminPassword(c.env);
   return !!adminPassword && constantTimeCompare(headerPw, adminPassword);
 }
 

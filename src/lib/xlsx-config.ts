@@ -221,9 +221,11 @@ export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
   for (let i = configRows.length; i <= FILL_ROWS; i++) configRows.push(['', '']);
   sheets.set('配置', configRows);
 
-  // 生成 xlsx 文件：三个表都保护，表头锁定，第 2 行起可编辑
+  // 生成 xlsx 文件：三个表都保护，表头锁定，第 2 行起可编辑。
+  // 「配置」表的项目名（第 0 列）是固定 key（如 管理员密码），锁定防误改；只留「值」列（第 1 列）可填。
   const protectedSheets = new Set(['密码', '隐藏', '配置']);
-  const xlsxBuffer = await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1 });
+  const unlockCols = new Map([['配置', new Set([1])]]);
+  const xlsxBuffer = await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1, unlockCols });
 
   // 如果提供了密码，加密
   if (password) {

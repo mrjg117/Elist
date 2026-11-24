@@ -295,12 +295,14 @@ function indexToColLetter(index: number): string {
 
 /**
  * 生成选项。
- * - protectedSheets：需要启用工作表保护的 sheet 名集合（表头锁定，仅 unlockRows 指定的行可编辑）
- * - unlockFromRow：从第几行（0-based，含表头）起整行可编辑；不传则该 sheet 全部锁定/全部可编辑取决于是否列入 protectedSheets
+ * - protectedSheets：需要启用工作表保护的 sheet 名集合（表头锁定，仅解锁区可编辑）
+ * - unlockFromRow：从第几行（0-based，含表头）起进入解锁区
+ * - unlockCols：按 sheet 指定允许编辑的列索引（0-based）。指定后该 sheet 仅这些列可编辑，其余列（如 key 列）锁定防误改；不指定则解锁区整行可编辑
  */
 export interface GenerateOptions {
   protectedSheets?: Set<string>;
   unlockFromRow?: number;
+  unlockCols?: Map<string, Set<number>>;
 }
 
 /** styles.xml：样式 1 = 解锁（可编辑），样式 0 = 锁定（默认） */
@@ -432,7 +434,8 @@ export async function generateXlsx(sheets: Map<string, string[][]>, options: Gen
   for (const [sheetName, rows] of sheets.entries()) {
     const protectedSheet = !!(options.protectedSheets && options.protectedSheets.has(sheetName));
     const unlockFrom = protectedSheet ? (options.unlockFromRow ?? 1) : -1;
-    const sheetXml = generateSheetXml(rows, stringIndex, protectedSheet, unlockFrom);
+    const unlockCols = options.unlockCols?.get(sheetName);
+    const sheetXml = generateSheetXml(rows, stringIndex, protectedSheet, unlockFrom, unlockCols);
     files.set(`xl/worksheets/sheet${sheetIdx}.xml`, new TextEncoder().encode(sheetXml));
     sheetIdx++;
   }
@@ -441,23 +444,26 @@ export async function generateXlsx(sheets: Map<string, string[][]>, options: Gen
 }
 
 /** 生成 worksheet XML */
-function generateSheetXml(rows: string[][], stringIndex: Map<string, number>, protectedSheet: boolean, unlockFrom: number): string {
+function generateSheetXml(rows: string[][], stringIndex: Map<string, number>, protectedSheet: boolean, unlockFrom: number, unlockCols?: Set<number>): string {
   const sheetData: string[] = [];
   // 表头列数：解锁区空单元格也要补齐到这个宽度，否则用户点空白处是默认锁定样式，填不了
   const headerCols = rows[0]?.length || 0;
-  
+  // 允许的列：若指定 unlockCols 则只用这些列可编辑；否则解锁区整行所有列可编辑
+  const allowed = (colIdx: number) => !unlockCols || unlockCols.has(colIdx);
+
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     const cells: string[] = [];
-    // 解锁行：从第 unlockFrom 行（0-based）起整行可编辑；表头行（行 0）始终锁定
-    const unlocked = protectedSheet && rowIdx >= unlockFrom;
-    const styleAttr = unlocked ? ' s="1"' : '';
-    const colCount = unlocked ? Math.max(row.length, headerCols) : row.length;
-    
+    // 解锁行：从第 unlockFrom 行（0-based）起；表头行（行 0）始终锁定
+    const unlockedRow = protectedSheet && rowIdx >= unlockFrom;
+    const colCount = unlockedRow ? Math.max(row.length, headerCols) : row.length;
+
     for (let colIdx = 0; colIdx < colCount; colIdx++) {
+      const unlocked = unlockedRow && allowed(colIdx);
+      const styleAttr = unlocked ? ' s="1"' : '';
       const value = row[colIdx] || '';
       const ref = `${indexToColLetter(colIdx)}${rowIdx + 1}`;
-      
+
       if (!value) {
         // 解锁区的空格子写成带样式 1 的空单元格，保证用户可编辑
         if (unlocked) cells.push(`<c r="${ref}" s="1"/>`);
@@ -468,7 +474,7 @@ function generateSheetXml(rows: string[][], stringIndex: Map<string, number>, pr
         cells.push(`<c r="${ref}" t="s"${styleAttr}><v>${strIdx}</v></c>`);
       }
     }
-    
+
     if (cells.length > 0) {
       sheetData.push(`<row r="${rowIdx + 1}">${cells.join('')}</row>`);
     }

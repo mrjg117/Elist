@@ -253,7 +253,7 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
         mount: '/', root: configPath, driver: driverName,
         addition: account.auth, user_id: getMountUserId(c.env, account.name),
       }, c.env);
-      const content = await xlsxConfig.generateXlsx();
+      const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
       await driver.writeBinary('/.elist.xlsx', content);
       lastConfigAccount = primaryName;
       xlsxConfig.markLoaded();
@@ -551,7 +551,8 @@ export async function handleConfigSave(c: Context<{ Bindings: Env }>) {
   const { driver, rest } = configMount;
   const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
 
-  const content = await xlsxConfig.generateXlsx();
+  const xlsxPassword = c.env.CONF_PW;
+  const content = await xlsxConfig.generateXlsx(xlsxPassword);
   await driver.writeBinary(xlsxPath, content);
 
   xlsxConfig.clearDirty();
@@ -569,7 +570,8 @@ export async function handleConfigClear(c: Context<{ Bindings: Env }>) {
     if (configMount) {
       const { driver, rest } = configMount;
       const xlsxPath = rest === '/' ? '/.elist.xlsx' : rest + '/.elist.xlsx';
-      const content = await xlsxConfig.generateXlsx();
+      const xlsxPassword = c.env.CONF_PW;
+      const content = await xlsxConfig.generateXlsx(xlsxPassword);
       await driver.writeBinary(xlsxPath, content);
     }
   }

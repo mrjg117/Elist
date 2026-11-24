@@ -4,7 +4,7 @@
  * 配置架构（v4，变量拆分）：
  *   - AUTH_<NAME>：账号机密（type、凭据等）
  *   - MOUNT_<NAME>：挂载配置（单对象 / 数组 / {users:[...]} 三种写法等价）
- *   - 配置表 .elist.xlsx 为明文（便于 Excel/WPS 编辑后稳定读回）
+ *   - CONF_PW：xlsx 配置文件密码（可选）
  *   - 变量名后缀匹配：MOUNT_ZHU 自动关联 AUTH_ZHU
  *   - 一份 AUTH 可挂多个 user：MOUNT 里写数组，每个 user 一个 user_id + mounts
  *   - 配置文件身份：多 user 时取第一个非 sharepoint 的 user
@@ -108,6 +108,6 @@ export interface Env {
   S3_LINK_TTL?: string;    // 公用：S3 下载直链有效期（秒）
   CONFIG_AUTH?: string;    // 配置文件存储账号名（对应 AUTH_<NAME>）
   CONFIG_PATH?: string;    // 配置文件存储路径（存储内相对路径，如 / 或 /config）
-  CONF_PW?: string;        // 旧加密 .elist.xlsx 的读取密码（新表为明文，仅用于兼容旧表）
+  CONF_PW?: string;        // 配置文件（.elist.xlsx）加密密码
   [key: string]: any;      // 其余为 AUTH_<NAME> 等凭据（经 secret 注入）
 }

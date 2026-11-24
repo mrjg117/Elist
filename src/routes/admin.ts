@@ -223,7 +223,8 @@ export async function handleSaveConfig(c: Context<{ Bindings: Env }>) {
   }
   
   const configPath = c.env.CONFIG_PATH || '/';
-  const content = await xlsxConfig.generateXlsx();
+  const xlsxPassword = c.env.CONF_PW;
+  const content = await xlsxConfig.generateXlsx(xlsxPassword);
 
   // 收敛保存位置：优先写回「刚读到 .elist.xlsx 的账号」(多账号下保证读=写同一处)，
   // 再回退 configAuth -> first-onedrive -> first-s3 -> 第一个存储

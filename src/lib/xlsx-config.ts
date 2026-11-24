@@ -6,7 +6,7 @@
  *   - 所有配置检查（密码、隐藏、登录等）走内存 Map（< 1ms）
  *   - 修改配置时先改内存，定期回写 xlsx
  *   - 清理缓存按钮：先回写 xlsx，再清内存
- *   - 配置表以明文 xlsx 生成，方便用 Excel/WPS 直接编辑（读端仍兼容旧加密表）
+ *   - 支持加密（CONF_PW）
  *
  * xlsx 结构（表名/表头全中文，由本模块生成或覆盖）：
  *   密码：路径 | 密码 | 提示
@@ -15,7 +15,7 @@
  */
 
 import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
-import { decryptWorkbook } from 'ooxml-encryption';
+import { decryptWorkbook, encryptWorkbook } from 'ooxml-encryption';
 
 /**
  * 本地路径归一化（不依赖 config.ts，避免循环引用）。
@@ -198,8 +198,8 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
   data.dirty = true;
 }
 
-/** 将内存配置生成 xlsx 二进制（明文；配置表用 Excel/WPS 编辑后必须能被稳定读回，故不加密） */
-export async function generateXlsx(): Promise<ArrayBuffer> {
+/** 将内存配置生成 xlsx 二进制（支持加密） */
+export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
   // 生成前确保管理员密码键已存在，自动建表时也会带上空值键
   ensureDefaultConfig();
 
@@ -236,7 +236,15 @@ export async function generateXlsx(): Promise<ArrayBuffer> {
   // 「配置」表的项目名（第 0 列）是固定 key（如 管理员密码），锁定防误改；只留「值」列（第 1 列）可填。
   const protectedSheets = new Set(['密码', '隐藏', '配置']);
   const unlockCols = new Map([['配置', new Set([1])]]);
-  return await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1, unlockCols });
+  const xlsxBuffer = await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1, unlockCols });
+
+  // 如果提供了密码，加密
+  if (password) {
+    const encrypted = await encryptWorkbook(new Uint8Array(xlsxBuffer), password);
+    return encrypted.buffer as ArrayBuffer;
+  }
+
+  return xlsxBuffer;
 }
 
 /** 检查是否已加载（文件层：表已读到/已建，但可能是空的未配置表） */

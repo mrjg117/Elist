@@ -323,38 +323,57 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 export async function parseXlsx(buffer: ArrayBuffer): Promise<Map<string, string[][]>> {
   const files = await unzip(buffer);
   
-  // 解析共享字符串
+  // 解析共享字符串。Excel/WPS 可能把一个字符串拆成多个 <r><t> run，
+  // 必须拼接 <si> 下所有 <t>，否则中文 key（如「管理员密码」）会被读成半截而匹配不上。
   const sharedStrings: string[] = [];
   const ssXml = files.get('xl/sharedStrings.xml');
   if (ssXml) {
     const doc = parseXml(ssXml);
     const siElements = getElements(doc, 'si');
     for (const si of siElements) {
-      const tEl = si.getElementsByTagName('t')[0];
-      sharedStrings.push(tEl?.textContent || '');
+      const tEls = getElements(si, 't');
+      sharedStrings.push(tEls.map((t) => t.textContent || '').join(''));
     }
   }
-  
-  // 解析工作簿获取 sheet 名称
+
+  // 解析 r:id -> worksheet 真实文件路径。Excel/WPS 重存后会重排 sheet 顺序，
+  // 且 sheetN.xml 的编号与 workbook.xml 中的顺序不一定对应，必须走 rels 映射。
+  const relsMap = new Map<string, string>();
+  const relsXml = files.get('xl/_rels/workbook.xml.rels');
+  if (relsXml) {
+    const doc = parseXml(relsXml);
+    for (const rel of getElements(doc, 'Relationship')) {
+      const id = rel.getAttribute('Id');
+      const target = rel.getAttribute('Target') || '';
+      if (!id || !target) continue;
+      // target 形如 "worksheets/sheet1.xml" 或 "/xl/worksheets/sheet1.xml"
+      const normalized = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
+      relsMap.set(id, normalized);
+    }
+  }
+
+  // 解析工作簿获取 sheet 名称与 r:id
   const sheets = new Map<string, string[][]>();
   const wbXml = files.get('xl/workbook.xml');
   if (wbXml) {
     const doc = parseXml(wbXml);
     const sheetElements = getElements(doc, 'sheet');
-    
+
     for (let i = 0; i < sheetElements.length; i++) {
       const sheet = sheetElements[i];
       const name = sheet.getAttribute('name') || `Sheet${i + 1}`;
-      const sheetFile = `xl/worksheets/sheet${i + 1}.xml`;
+      const rid = sheet.getAttribute('r:id') || '';
+      // 优先用 r:id 经 rels 找到真实文件；缺失时回退到按序号（兼容极简/自生成表）。
+      const sheetFile = relsMap.get(rid) || `xl/worksheets/sheet${i + 1}.xml`;
       const sheetXml = files.get(sheetFile);
-      
+
       if (sheetXml) {
         const rows = extractCells(sheetXml, sharedStrings);
         sheets.set(name, rows);
       }
     }
   }
-  
+
   return sheets;
 }
 

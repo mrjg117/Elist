@@ -53,8 +53,8 @@ export async function checkPathPassword(
   _fresh = false,
   isAdmin = false
 ): Promise<{ ok: boolean; lockedAt?: string; required?: boolean }> {
-  // 未加载时拒绝访问（安全：防止冷启动绕过）
-  if (!xlsxConfig.isLoaded()) {
+  // 未配置（含空框架表）时拒绝访问（安全：防止冷启动/空表绕过）
+  if (!xlsxConfig.isConfigured()) {
     return { ok: false, lockedAt: fullPath };
   }
 
@@ -88,9 +88,9 @@ export async function isHidden(
   _readText?: ReadText,
   _fresh = false
 ): Promise<boolean> {
-  if (!xlsxConfig.isLoaded()) {
-    // 失败安全：配置未加载（冷启动 / isolate 内存未统一 / 读取失败）时默认「隐藏」，
-    // 绝不因内存不一致而泄露隐藏项。与 X-Admin-Password 无状态鉴权同一思路：
+  if (!xlsxConfig.isConfigured()) {
+    // 失败安全：配置未加载或是空框架表（管理员密码未填）时默认「隐藏」，
+    // 绝不因内存不一致或空表而泄露隐藏项。与 X-Admin-Password 无状态鉴权同一思路：
     // 安全判定不依赖易失内存，宁可拒绝服务也不泄露。
     return true;
   }
@@ -105,8 +105,8 @@ export async function filterHidden<T extends { name: string; path: string }>(
   _fresh = false,
   isAdmin = false
 ): Promise<T[]> {
-  if (!xlsxConfig.isLoaded()) {
-    return []; // 失败安全：未加载时全部隐藏，绝不泄露隐藏项
+  if (!xlsxConfig.isConfigured()) {
+    return []; // 失败安全：未配置（含空表）时全部隐藏，绝不泄露隐藏项
   }
   if (isAdmin) return entries; // 管理员可见全部隐藏项（与网页端 /api/* 一致）
   return entries.filter((e) => !xlsxConfig.isHidden(e.path));

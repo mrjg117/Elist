@@ -70,8 +70,8 @@ async function isAuthenticated(c: Context<{ Bindings: Env }>): Promise<boolean> 
 
 // POST /api/admin/login
 export async function handleLogin(c: Context<{ Bindings: Env }>) {
-  // 确保配置已加载
-  await loadXlsxConfig(c, false);
+  // 强制重读配置：隔离内旧 loaded 状态可能来自已删除的旧表，fresh 才能发现表丢失并重建空框架表
+  await loadXlsxConfig(c, true);
 
   // 同时支持 SPA 的 JSON 与 /dav 网页端登录框的表单提交（application/x-www-form-urlencoded）。
   // next 可能来自表单体（POST 表单）或 URL query（退出链接 / 前端拼接），统一抽取。

@@ -234,9 +234,18 @@ export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
   return xlsxBuffer;
 }
 
-/** 检查是否已加载 */
+/** 检查是否已加载（文件层：表已读到/已建，但可能是空的未配置表） */
 export function isLoaded(): boolean {
   return data.loaded;
+}
+
+/**
+ * 检查是否「已配置」（门禁放行前提）。
+ * 空框架表（仅表头、管理员密码为空）不算已配置——门禁保持失败安全全隐藏，
+ * 避免删表/首跑后空表被当成有效配置导致全部挂载裸奔。
+ */
+export function isConfigured(): boolean {
+  return data.loaded && !!(data.config.get(ADMIN_PASSWORD_KEY) || '');
 }
 
 /** 标记为已加载（用于没有 .elist.xlsx 的情况） */

@@ -173,6 +173,10 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
 
   // 创建加载 Promise 并赋值给 pendingLoad
   pendingLoad = (async () => {
+    // fresh 重载从零开始：清空 isolate 内存里的旧配置。
+    // 否则删表后重建空表时，generateXlsx 会把旧密码/旧隐藏规则写回新表，门禁按旧规则放行（裸奔）。
+    if (fresh) xlsxConfig.clearAll();
+
     const configPath = c.env.CONFIG_PATH || '/';
     const accounts = getAllAuthAccounts(c.env);
     if (accounts.length === 0) {

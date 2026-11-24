@@ -227,10 +227,31 @@ export async function loadXlsxConfig(c: Context<{ Bindings: Env }>, fresh = fals
       }
     }
 
-    // 3) 全账号均无配置文件：保持「未加载」状态，由 acl.ts 失败安全默认隐藏所有项。
-    //    绝不在此自动创建空 .elist.xlsx 并 markLoaded()——空配置会清空隐藏/密码规则，
-    //    导致根目录显示全部挂载盘（即最初好用的隐藏功能被误改没的根因）。首跑用户应自行
-    //    通过管理页保存配置来创建文件，届时 handleSaveConfig 会写回并 markLoaded()。
+    // 3) 全账号均无配置文件：自动创建带框架的空配置表（仅表头 + 空填写区，无数据），
+    //    让用户打开表就知道管理员密码/隐藏/密码该填在哪。写=读同一确定性账号。
+    //    建表后 markLoaded，此时密码为空，登录接口会提示"密码未设置"，用户填表保存后即可登录。
+    const primaryName = getConfigAccount(c)!;
+    const account = accounts.find((a) => a.name === primaryName);
+    if (!account) return;
+    try {
+      const { getDriverClass } = await import('../drivers/registry');
+      const driverName = getConfigDriverName(c.env, primaryName, account.type);
+      const DriverClass = getDriverClass(driverName);
+      if (!DriverClass) return;
+      const driver = new DriverClass();
+      await driver.init({
+        mount: '/', root: configPath, driver: driverName,
+        addition: account.auth, user_id: getMountUserId(c.env, account.name),
+      }, c.env);
+      const content = await xlsxConfig.generateXlsx(c.env.CONF_PW);
+      await driver.writeBinary('/.elist.xlsx', content);
+      lastConfigAccount = primaryName;
+      xlsxConfig.markLoaded();
+      console.log('loadXlsxConfig: 未找到配置表，已在', primaryName, '自动创建框架表 /.elist.xlsx');
+    } catch (e) {
+      // 建表失败：保持未加载，失败安全由 acl.ts 处理
+      console.error('loadXlsxConfig: 自动创建配置表失败', e);
+    }
   })();
 
   try {
@@ -323,7 +344,7 @@ async function isAdminRequest(c: Context<{ Bindings: Env }>): Promise<boolean> {
   const headerPw = c.req.header('X-Admin-Password');
   if (!headerPw) return false;
   try { await loadXlsxConfig(c, false); } catch { return false; }
-  const adminPassword = xlsxConfig.getConfig('admin_password') || '';
+  const adminPassword = xlsxConfig.getConfig('管理员密码') || '';
   return !!adminPassword && constantTimeCompare(headerPw, adminPassword);
 }
 

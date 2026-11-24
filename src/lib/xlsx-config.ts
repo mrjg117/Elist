@@ -8,13 +8,10 @@
  *   - 清理缓存按钮：先回写 xlsx，再清内存
  *   - 支持加密（使用 CONF_PW 环境变量）
  *
- * xlsx 结构：
- *   Sheet1: passwords（路径密码配置）
- *     | path | password | hint |
- *   Sheet2: hidden（隐藏目录）
- *     | path |
- *   Sheet3: config（全局配置，如登录密码）
- *     | key | value |
+ * xlsx 结构（表名/表头全中文，由本模块生成或覆盖）：
+ *   密码：路径 | 密码 | 提示
+ *   隐藏：路径
+ *   配置：配置项 | 值（管理员密码固定占一行）
  */
 
 import { parseXlsx as parseXlsxMinimal, generateXlsx as generateXlsxMinimal } from './xlsx-minimal';
@@ -37,6 +34,9 @@ function normPath(p: string): string {
   return r === '/' ? '/' : r;
 }
 
+/** 填写区预留空行数（框架表里留出可编辑的空白行）。 */
+const FILL_ROWS = 30;
+
 /** 内存中的配置数据 */
 interface ConfigData {
   passwords: Map<string, { password: string; hint?: string }>;
@@ -54,24 +54,15 @@ const data: ConfigData = {
   dirty: false,
 };
 
-/**
- * 刚需全局配置项：自动建表或读取时若缺失，自动补入该键、默认空字符串。
- * 例如 admin_password——保证「键一定存在」，用户只需手动改表把值填上即可。
- */
-const DEFAULT_CONFIG: Record<string, string> = {
-  admin_password: '',
-};
+/** 管理员密码在「配置」表中的固定键名。 */
+export const ADMIN_PASSWORD_KEY = '管理员密码';
 
-/** 确保刚需全局配置项存在（缺失则补空值并标脏，下次保存落盘）。 */
+/** 确保管理员密码键存在（缺失则补空值并标脏，下次保存落盘）。 */
 export function ensureDefaultConfig(): void {
-  let changed = false;
-  for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
-    if (!data.config.has(key)) {
-      data.config.set(key, value);
-      changed = true;
-    }
+  if (!data.config.has(ADMIN_PASSWORD_KEY)) {
+    data.config.set(ADMIN_PASSWORD_KEY, '');
+    data.dirty = true;
   }
-  if (changed) data.dirty = true;
 }
 
 /** 从 xlsx 二进制数据解析配置（支持加密） */
@@ -92,8 +83,8 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
   // 使用最小化模块解析
   const sheets = await parseXlsxMinimal(xlsxBuffer);
 
-  // Sheet1: passwords
-  const pwSheet = sheets.get('passwords');
+  // Sheet1: 密码
+  const pwSheet = sheets.get('密码');
   if (pwSheet) {
     data.passwords.clear();
     for (let i = 1; i < pwSheet.length; i++) {
@@ -107,8 +98,8 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
-  // Sheet2: hidden
-  const hiddenSheet = sheets.get('hidden');
+  // Sheet2: 隐藏
+  const hiddenSheet = sheets.get('隐藏');
   if (hiddenSheet) {
     data.hidden.clear();
     for (let i = 1; i < hiddenSheet.length; i++) {
@@ -120,21 +111,20 @@ export async function parseXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
-  // Sheet3: config
-  const configSheet = sheets.get('config');
+  // Sheet3: 配置
+  const configSheet = sheets.get('配置');
   if (configSheet) {
     data.config.clear();
     for (let i = 1; i < configSheet.length; i++) {
       const row = configSheet[i];
       if (!row || row.length < 1) continue;
-      const key = row[0];
+      const key = (row[0] || '').trim();
       if (!key) continue;
-      const value = row[1] || '';
-      data.config.set(key, value);
+      data.config.set(key, row[1] || '');
     }
   }
 
-  // 老表若缺刚需全局配置项（如 admin_password），内存补键（标脏以便后续落盘）
+  // 缺管理员密码键则补空值（标脏以便后续落盘）
   ensureDefaultConfig();
 
   data.loaded = true;
@@ -160,7 +150,7 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
 
   const sheets = await parseXlsxMinimal(xlsxBuffer);
 
-  const pwSheet = sheets.get('passwords');
+  const pwSheet = sheets.get('密码');
   if (pwSheet) {
     for (let i = 1; i < pwSheet.length; i++) {
       const row = pwSheet[i];
@@ -172,7 +162,7 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
-  const hiddenSheet = sheets.get('hidden');
+  const hiddenSheet = sheets.get('隐藏');
   if (hiddenSheet) {
     for (let i = 1; i < hiddenSheet.length; i++) {
       const row = hiddenSheet[i];
@@ -183,12 +173,12 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
     }
   }
 
-  const configSheet = sheets.get('config');
+  const configSheet = sheets.get('配置');
   if (configSheet) {
     for (let i = 1; i < configSheet.length; i++) {
       const row = configSheet[i];
       if (!row || row.length < 1) continue;
-      const key = row[0];
+      const key = (row[0] || '').trim();
       if (!key) continue;
       data.config.set(key, row[1] || '');
     }
@@ -199,35 +189,41 @@ export async function mergeXlsx(buffer: ArrayBuffer, password?: string): Promise
 
 /** 将内存配置生成 xlsx 二进制（支持加密） */
 export async function generateXlsx(password?: string): Promise<ArrayBuffer> {
-  // 生成前确保刚需全局配置项（如 admin_password）已存在，自动建表时也会带上空值键
+  // 生成前确保管理员密码键已存在，自动建表时也会带上空值键
   ensureDefaultConfig();
 
-  // 构建 sheets 数据
+  // 构建 sheets 数据（中文表名 + 中文表头，第 2 行起为填写区）
   const sheets = new Map<string, string[][]>();
 
-  // Sheet1: passwords
-  const pwRows: string[][] = [['path', 'password', 'hint']];
+  // Sheet1: 密码
+  const pwRows: string[][] = [['路径', '密码', '提示']];
   for (const [path, { password: pwd, hint }] of data.passwords.entries()) {
     pwRows.push([path, pwd, hint || '']);
   }
-  sheets.set('passwords', pwRows);
+  for (let i = pwRows.length; i <= FILL_ROWS; i++) pwRows.push(['', '', '']);
+  sheets.set('密码', pwRows);
 
-  // Sheet2: hidden
-  const hiddenRows: string[][] = [['path']];
+  // Sheet2: 隐藏
+  const hiddenRows: string[][] = [['路径']];
   for (const path of data.hidden) {
     hiddenRows.push([path]);
   }
-  sheets.set('hidden', hiddenRows);
+  for (let i = hiddenRows.length; i <= FILL_ROWS; i++) hiddenRows.push(['']);
+  sheets.set('隐藏', hiddenRows);
 
-  // Sheet3: config
-  const configRows: string[][] = [['key', 'value']];
+  // Sheet3: 配置（管理员密码是刚需键，始终占一行，值为空待填）
+  const configRows: string[][] = [['配置项', '值']];
+  configRows.push([ADMIN_PASSWORD_KEY, data.config.get(ADMIN_PASSWORD_KEY) || '']);
   for (const [key, value] of data.config.entries()) {
+    if (key === ADMIN_PASSWORD_KEY) continue;
     configRows.push([key, value]);
   }
-  sheets.set('config', configRows);
+  for (let i = configRows.length; i <= FILL_ROWS; i++) configRows.push(['', '']);
+  sheets.set('配置', configRows);
 
-  // 生成 xlsx 文件
-  const xlsxBuffer = await generateXlsxMinimal(sheets);
+  // 生成 xlsx 文件：三个表都保护，表头锁定，第 2 行起可编辑
+  const protectedSheets = new Set(['密码', '隐藏', '配置']);
+  const xlsxBuffer = await generateXlsxMinimal(sheets, { protectedSheets, unlockFromRow: 1 });
 
   // 如果提供了密码，加密
   if (password) {

@@ -293,6 +293,30 @@ function indexToColLetter(index: number): string {
   return result;
 }
 
+/**
+ * 生成选项。
+ * - protectedSheets：需要启用工作表保护的 sheet 名集合（表头锁定，仅 unlockRows 指定的行可编辑）
+ * - unlockFromRow：从第几行（0-based，含表头）起整行可编辑；不传则该 sheet 全部锁定/全部可编辑取决于是否列入 protectedSheets
+ */
+export interface GenerateOptions {
+  protectedSheets?: Set<string>;
+  unlockFromRow?: number;
+}
+
+/** styles.xml：样式 1 = 解锁（可编辑），样式 0 = 锁定（默认） */
+const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+  <borders count="1"><border/></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyProtection="1"><protection locked="0"/></xf>
+  </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
 /** 解析 xlsx 文件 */
 export async function parseXlsx(buffer: ArrayBuffer): Promise<Map<string, string[][]>> {
   const files = await unzip(buffer);
@@ -333,8 +357,10 @@ export async function parseXlsx(buffer: ArrayBuffer): Promise<Map<string, string
 }
 
 /** 生成 xlsx 文件 */
-export async function generateXlsx(sheets: Map<string, string[][]>): Promise<ArrayBuffer> {
+export async function generateXlsx(sheets: Map<string, string[][]>, options: GenerateOptions = {}): Promise<ArrayBuffer> {
   const files = new Map<string, Uint8Array>();
+  // 有任一 sheet 需要保护就必须带 styles.xml（样式 1 = 解锁）
+  const needProtect = !!(options.protectedSheets && options.protectedSheets.size > 0);
   
   // 收集所有字符串
   const allStrings: string[] = [];
@@ -361,8 +387,10 @@ export async function generateXlsx(sheets: Map<string, string[][]>): Promise<Arr
   <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  ${needProtect ? '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' : ''}
 </Types>`;
   files.set('[Content_Types].xml', new TextEncoder().encode(contentTypes));
+  if (needProtect) files.set('xl/styles.xml', new TextEncoder().encode(STYLES_XML));
   
   // _rels/.rels
   const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -378,6 +406,7 @@ export async function generateXlsx(sheets: Map<string, string[][]>): Promise<Arr
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>
   <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+  ${needProtect ? '<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' : ''}
 </Relationships>`;
   files.set('xl/_rels/workbook.xml.rels', new TextEncoder().encode(wbRels));
   
@@ -400,8 +429,10 @@ export async function generateXlsx(sheets: Map<string, string[][]>): Promise<Arr
   
   // xl/worksheets/sheetN.xml
   let sheetIdx = 1;
-  for (const rows of sheets.values()) {
-    const sheetXml = generateSheetXml(rows, stringIndex);
+  for (const [sheetName, rows] of sheets.entries()) {
+    const protectedSheet = !!(options.protectedSheets && options.protectedSheets.has(sheetName));
+    const unlockFrom = protectedSheet ? (options.unlockFromRow ?? 1) : -1;
+    const sheetXml = generateSheetXml(rows, stringIndex, protectedSheet, unlockFrom);
     files.set(`xl/worksheets/sheet${sheetIdx}.xml`, new TextEncoder().encode(sheetXml));
     sheetIdx++;
   }
@@ -410,22 +441,31 @@ export async function generateXlsx(sheets: Map<string, string[][]>): Promise<Arr
 }
 
 /** 生成 worksheet XML */
-function generateSheetXml(rows: string[][], stringIndex: Map<string, number>): string {
+function generateSheetXml(rows: string[][], stringIndex: Map<string, number>, protectedSheet: boolean, unlockFrom: number): string {
   const sheetData: string[] = [];
+  // 表头列数：解锁区空单元格也要补齐到这个宽度，否则用户点空白处是默认锁定样式，填不了
+  const headerCols = rows[0]?.length || 0;
   
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     const cells: string[] = [];
+    // 解锁行：从第 unlockFrom 行（0-based）起整行可编辑；表头行（行 0）始终锁定
+    const unlocked = protectedSheet && rowIdx >= unlockFrom;
+    const styleAttr = unlocked ? ' s="1"' : '';
+    const colCount = unlocked ? Math.max(row.length, headerCols) : row.length;
     
-    for (let colIdx = 0; colIdx < row.length; colIdx++) {
-      const value = row[colIdx];
-      if (!value) continue;
-      
+    for (let colIdx = 0; colIdx < colCount; colIdx++) {
+      const value = row[colIdx] || '';
       const ref = `${indexToColLetter(colIdx)}${rowIdx + 1}`;
-      const strIdx = stringIndex.get(value);
       
+      if (!value) {
+        // 解锁区的空格子写成带样式 1 的空单元格，保证用户可编辑
+        if (unlocked) cells.push(`<c r="${ref}" s="1"/>`);
+        continue;
+      }
+      const strIdx = stringIndex.get(value);
       if (strIdx !== undefined) {
-        cells.push(`<c r="${ref}" t="s"><v>${strIdx}</v></c>`);
+        cells.push(`<c r="${ref}" t="s"${styleAttr}><v>${strIdx}</v></c>`);
       }
     }
     
@@ -434,11 +474,17 @@ function generateSheetXml(rows: string[][], stringIndex: Map<string, number>): s
     }
   }
   
+  // 保护：锁定整张表，禁止插入/删除行列，禁止改格式；仅解锁单元格（样式 1）可编辑
+  const protection = protectedSheet
+    ? `<sheetProtection sheet="1" objects="1" scenarios="1" formatCells="1" formatColumns="1" formatRows="1" insertColumns="1" insertRows="1" insertHyperlinks="1" deleteColumns="1" deleteRows="1" sort="1" autoFilter="1" pivotTables="1"/>`
+    : '';
+  
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>
     ${sheetData.join('\n    ')}
   </sheetData>
+  ${protection}
 </worksheet>`;
 }
 

@@ -33,7 +33,7 @@ export async function requireAdmin(c: Context<{ Bindings: Env }>): Promise<any |
   }
 
   // 从 xlsx 配置获取管理员密码
-  const expectedPassword = xlsxConfig.getConfig('admin_password');
+  const expectedPassword = xlsxConfig.getConfig('管理员密码');
   if (!expectedPassword || !constantTimeCompare(adminPassword, expectedPassword)) {
     // 密码错误：同样回 401 + challenge，让客户端重新弹出登录框（Basic 语义）。
     return c.json({ error: '管理员密码错误' }, 401, challenge);
